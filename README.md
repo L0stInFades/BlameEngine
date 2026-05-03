@@ -33,6 +33,7 @@ out/build/terminal-dev/bin/hackops_demo \
   --reset \
   --workspace /tmp/next-hackops-maintenance-window \
   --snapshot smoke \
+  --run-policy \
   --list
 ```
 

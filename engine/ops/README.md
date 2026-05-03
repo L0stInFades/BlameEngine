@@ -16,5 +16,7 @@ Current seed files:
 - `city_graph.json`
 - `README.md`
 
-This module does not execute player code yet. `PythonWorker` and `WorldApi`
-should build on top of this workspace boundary.
+`PythonWorker` runs a workspace Python script in an isolated child process and
+captures stdout, stderr, exit code, timeout state, and runtime duration. It is
+the first execution path for `policy.py`; future work should parse stdout into a
+typed policy result and feed it into `run_sim`.

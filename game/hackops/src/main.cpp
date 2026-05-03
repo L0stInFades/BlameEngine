@@ -1,4 +1,5 @@
 #include "next/ops/ops_workspace.h"
+#include "next/ops/python_worker.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -9,14 +10,17 @@ namespace {
 struct Options {
     std::string workspace;
     std::string snapshotName;
+    std::string pythonExecutable;
     bool reset = false;
     bool list = false;
+    bool runPolicy = false;
     bool help = false;
 };
 
 void PrintUsage() {
     std::cout
         << "Usage: hackops_demo [--workspace path] [--reset] [--snapshot name] [--list]\n"
+        << "                    [--run-policy] [--python executable]\n"
         << "\n"
         << "Creates the HackOps maintenance-window workspace without starting the renderer.\n";
 }
@@ -44,6 +48,12 @@ bool ParseArgs(int argc, char** argv, Options& options) {
             options.reset = true;
         } else if (arg == "--list") {
             options.list = true;
+        } else if (arg == "--run-policy") {
+            options.runPolicy = true;
+        } else if (arg == "--python") {
+            if (!ReadValue(i, argc, argv, options.pythonExecutable)) {
+                return false;
+            }
         } else if (arg == "--help" || arg == "-h") {
             options.help = true;
         } else {
@@ -88,6 +98,42 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::cout << "snapshot=" << snapshot.path << "\n";
+    }
+
+    if (options.runPolicy) {
+        Next::PythonWorkerConfig workerConfig;
+        workerConfig.workingDirectory = workspace.RootPath();
+        workerConfig.scriptPath = "policy.py";
+        workerConfig.pythonExecutable = options.pythonExecutable;
+
+        Next::PythonWorkerResult result;
+        Next::PythonWorker worker;
+        if (!worker.Run(workerConfig, &result)) {
+            std::cerr << "hackops_demo: " << worker.LastError() << "\n";
+            if (!result.stderrText.empty()) {
+                std::cerr << result.stderrText;
+            }
+            return 1;
+        }
+
+        std::cout << "policy_exit=" << result.exitCode << "\n";
+        std::cout << "policy_timed_out=" << (result.timedOut ? "true" : "false") << "\n";
+        std::cout << "policy_duration_ms=" << result.durationMs << "\n";
+        if (!result.stdoutText.empty()) {
+            std::cout << "policy_stdout=" << result.stdoutText;
+            if (result.stdoutText.back() != '\n') {
+                std::cout << "\n";
+            }
+        }
+        if (!result.stderrText.empty()) {
+            std::cout << "policy_stderr=" << result.stderrText;
+            if (result.stderrText.back() != '\n') {
+                std::cout << "\n";
+            }
+        }
+        if (!result.Succeeded()) {
+            return 1;
+        }
     }
 
     if (options.list) {

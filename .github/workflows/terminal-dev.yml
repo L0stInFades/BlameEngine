@@ -50,10 +50,18 @@ jobs:
             --reset \
             --workspace /tmp/next-hackops-ci \
             --snapshot ci \
-            --list
+            --run-policy \
+            --list | tee /tmp/hackops-policy-ci.txt
           test -f /tmp/next-hackops-ci/policy.py
           test -f /tmp/next-hackops-ci/orders.log
           test -f /tmp/next-hackops-ci/city_graph.json
           test -d /tmp/next-hackops-ci/snapshots
-          cd /tmp/next-hackops-ci
-          python3 policy.py
+          grep '"route_id": "route.loading-docks"' /tmp/hackops-policy-ci.txt
+          printf 'raise SystemExit(7)\n' > /tmp/next-hackops-ci/policy.py
+          if out/build/terminal-dev/bin/hackops_demo \
+            --workspace /tmp/next-hackops-ci \
+            --run-policy > /tmp/hackops-policy-fail-ci.txt; then
+            echo "expected policy failure"
+            exit 1
+          fi
+          grep 'policy_exit=7' /tmp/hackops-policy-fail-ci.txt

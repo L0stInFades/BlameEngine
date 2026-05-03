@@ -93,6 +93,37 @@ Next steps:
 - Feed the generated workspace into `NvimSurface` so the editor opens the actual
   task files.
 
+## Third Spike: PythonWorker
+
+The third executable research artifact is:
+
+```text
+engine/ops/include/next/ops/python_worker.h
+engine/ops/src/python_worker.cpp
+```
+
+It validates the execution boundary for player Python scripts. The game no
+longer shells out manually from CI; `hackops_demo --run-policy` asks
+`PythonWorker` to run `policy.py` in the generated workspace, capture stdout,
+stderr, exit code, timeout state, and duration.
+
+Verified locally and in CI:
+
+- `hackops_demo --reset --workspace /tmp/next-hackops-ci --snapshot ci --run-policy --list`
+- A failing `policy.py` exits through the worker with `policy_exit=7` and a
+  non-zero `hackops_demo` process exit.
+- Worker stdout contains the selected route JSON:
+
+```json
+{"order_id": "order.demo", "route_id": "route.loading-docks"}
+```
+
+Next steps:
+
+- Convert worker stdout into a typed `PolicyResult`.
+- Add `run_sim` that scores witness risk and route consequences.
+- Add timeout fixtures so infinite-loop player code is part of the test matrix.
+
 ## Why This Matters
 
 If this path works, the production engine can use:
