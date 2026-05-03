@@ -17,18 +17,34 @@ NEXT 是一个面向“两宋项目”的自研引擎仓库。当前状态不是
 
 ## 快速开始
 
+### HackOps / 终端技术线
+
+跨平台开发真实 Neovim、Ops Runtime、玩家代码执行等 HackOps 技术时，使用
+terminal preset，不需要构建当前 Windows/DX12 渲染路径：
+
+```bash
+cmake --preset terminal-dev
+cmake --build --preset terminal-dev
+out/build/terminal-dev/bin/next_nvim_surface_probe \
+  --clean \
+  --file tools/nvim_surface_probe/sample_policy.py \
+  --snapshot /tmp/nvim-surface-cpp.txt
+```
+
+详细说明见 `docs/HACKOPS_DEV_QUICKSTART.md`。
+
 ### 配置与构建
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 18" -A x64
-cmake --build build --config Debug
+cmake --preset windows-dx12-dev
+cmake --build --preset windows-dx12-dev
 ```
 
 如需启用真实 Lua VM，并且本机已经安装 system Lua：
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 18" -A x64 -DUSE_SYSTEM_LUA=ON
-cmake --build build --config Debug
+cmake --preset windows-dx12-dev -DUSE_SYSTEM_LUA=ON
+cmake --build --preset windows-dx12-dev
 ```
 
 如果没找到 Lua，脚本系统会自动回退到 stub mode，不会阻断构建。
@@ -36,18 +52,18 @@ cmake --build build --config Debug
 ### 运行
 
 ```powershell
-.\build\bin\Debug\song_demo.exe
-.\build\bin\Debug\next_editor.exe
+.\out\build\windows-dx12-dev\bin\Debug\song_demo.exe
+.\out\build\windows-dx12-dev\bin\Debug\next_editor.exe
 ```
 
 推荐的 smoke 命令：
 
 ```powershell
-.\build\bin\Debug\song_demo.exe --smoke-frames 5
-.\build\bin\Debug\song_demo.exe --run-self-tests --smoke-frames 1
-.\build\bin\Debug\next_editor.exe --smoke-frames 5 --no-imgui
-.\build\bin\Debug\next_editor.exe --load-package assets\test_package.npkg --smoke-frames 5 --no-imgui
-ctest --test-dir build -C Debug --output-on-failure
+.\out\build\windows-dx12-dev\bin\Debug\song_demo.exe --smoke-frames 5
+.\out\build\windows-dx12-dev\bin\Debug\song_demo.exe --run-self-tests --smoke-frames 1
+.\out\build\windows-dx12-dev\bin\Debug\next_editor.exe --smoke-frames 5 --no-imgui
+.\out\build\windows-dx12-dev\bin\Debug\next_editor.exe --load-package assets\test_package.npkg --smoke-frames 5 --no-imgui
+ctest --test-dir out\build\windows-dx12-dev -C Debug --output-on-failure
 ```
 
 ## 入口文档

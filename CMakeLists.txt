@@ -21,6 +21,14 @@ option(BUILD_TOOLS "Build tools" ON)
 option(BUILD_GAME "Build game" ON)
 option(BUILD_TESTS "Build tests" ON)
 
+set(NEXT_DEFAULT_BUILD_RENDERER ON)
+if(NOT WIN32)
+    set(NEXT_DEFAULT_BUILD_RENDERER OFF)
+endif()
+option(BUILD_RENDERER "Build the current DX12 renderer path" ${NEXT_DEFAULT_BUILD_RENDERER})
+option(BUILD_EDITOR "Build the editor tool" ON)
+option(BUILD_TERMINAL "Build Neovim terminal/editor integration" ON)
+
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -40,10 +48,21 @@ add_subdirectory(engine/serialization)      # 序列化系统
 add_subdirectory(engine/platform)
 add_subdirectory(engine/foundation)
 add_subdirectory(engine/runtime)
-add_subdirectory(engine/renderer)
+if(BUILD_RENDERER)
+    add_subdirectory(engine/renderer)
+else()
+    message(STATUS "BUILD_RENDERER=OFF: skipping DX12 renderer")
+endif()
 add_subdirectory(engine/profiler)
 add_subdirectory(engine/jobsystem)
-add_subdirectory(engine/game)
+if(BUILD_RENDERER)
+    add_subdirectory(engine/game)
+else()
+    message(STATUS "BUILD_RENDERER=OFF: skipping engine/game camera-feel module")
+endif()
+if(BUILD_TERMINAL)
+    add_subdirectory(engine/terminal)
+endif()
 
 # Optional modules
 add_subdirectory(engine/world)     # CP7: World Streaming
@@ -56,14 +75,25 @@ add_subdirectory(engine/task)      # CP9: Task System
 
 # Tools
 if(BUILD_TOOLS)
-    add_subdirectory(third_party/imgui)
     add_subdirectory(tools/assetc)
-    add_subdirectory(tools/editor)
+    if(BUILD_EDITOR AND BUILD_RENDERER AND WIN32)
+        add_subdirectory(third_party/imgui)
+        add_subdirectory(tools/editor)
+    elseif(BUILD_EDITOR)
+        message(STATUS "Skipping next_editor: requires BUILD_RENDERER=ON and WIN32")
+    endif()
+    if(BUILD_TERMINAL)
+        add_subdirectory(tools/nvim_surface_cpp_probe)
+    endif()
 endif()
 
 # Game
 if(BUILD_GAME)
-    add_subdirectory(game/song)
+    if(BUILD_RENDERER)
+        add_subdirectory(game/song)
+    else()
+        message(STATUS "Skipping song_demo: requires BUILD_RENDERER=ON")
+    endif()
 endif()
 
 # Tests

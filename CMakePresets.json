@@ -1,0 +1,48 @@
+{
+  "version": 2,
+  "configurePresets": [
+    {
+      "name": "terminal-dev",
+      "displayName": "Terminal / HackOps development",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/out/build/terminal-dev",
+      "cacheVariables": {
+        "BUILD_RENDERER": "OFF",
+        "BUILD_TOOLS": "ON",
+        "BUILD_EDITOR": "OFF",
+        "BUILD_GAME": "OFF",
+        "BUILD_TESTS": "OFF",
+        "BUILD_TERMINAL": "ON"
+      }
+    },
+    {
+      "name": "windows-dx12-dev",
+      "displayName": "Windows DX12 Song/editor development",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/windows-dx12-dev",
+      "cacheVariables": {
+        "BUILD_RENDERER": "ON",
+        "BUILD_TOOLS": "ON",
+        "BUILD_EDITOR": "ON",
+        "BUILD_GAME": "ON",
+        "BUILD_TESTS": "ON",
+        "BUILD_TERMINAL": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "terminal-dev",
+      "configurePreset": "terminal-dev",
+      "targets": [
+        "next_nvim_surface_probe"
+      ]
+    },
+    {
+      "name": "windows-dx12-dev",
+      "configurePreset": "windows-dx12-dev",
+      "configuration": "Debug"
+    }
+  ]
+}

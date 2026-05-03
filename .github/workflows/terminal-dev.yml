@@ -1,0 +1,45 @@
+name: terminal-dev
+
+on:
+  push:
+    branches:
+      - master
+      - "hackops/**"
+  pull_request:
+
+jobs:
+  terminal-dev:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Neovim on Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y neovim
+
+      - name: Install Neovim on macOS
+        if: runner.os == 'macOS'
+        run: brew install neovim
+
+      - name: Configure terminal preset
+        run: cmake --preset terminal-dev
+
+      - name: Build terminal probe
+        run: cmake --build --preset terminal-dev
+
+      - name: Run Neovim surface smoke
+        run: |
+          out/build/terminal-dev/bin/next_nvim_surface_probe \
+            --clean \
+            --file tools/nvim_surface_probe/sample_policy.py \
+            --snapshot /tmp/nvim-surface-ci.txt
+          test -s /tmp/nvim-surface-ci.txt
