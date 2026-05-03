@@ -10,6 +10,7 @@ Current behavior:
 - optionally resets it
 - optionally creates a snapshot
 - optionally runs `policy.py` through `PythonWorker`
+- optionally simulates the selected order and route from policy stdout
 - lists generated task files
 
 Example:
@@ -20,5 +21,6 @@ out/build/terminal-dev/bin/hackops_demo \
   --workspace /tmp/next-hackops-maintenance-window \
   --snapshot smoke \
   --run-policy \
+  --run-sim \
   --list
 ```

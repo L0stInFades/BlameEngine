@@ -34,6 +34,7 @@ out/build/terminal-dev/bin/hackops_demo \
   --workspace /tmp/next-hackops-maintenance-window \
   --snapshot smoke \
   --run-policy \
+  --run-sim \
   --list
 ```
 

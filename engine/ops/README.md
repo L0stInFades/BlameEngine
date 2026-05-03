@@ -17,6 +17,7 @@ Current seed files:
 - `README.md`
 
 `PythonWorker` runs a workspace Python script in an isolated child process and
-captures stdout, stderr, exit code, timeout state, and runtime duration. It is
-the first execution path for `policy.py`; future work should parse stdout into a
-typed policy result and feed it into `run_sim`.
+captures stdout, stderr, exit code, timeout state, and runtime duration.
+`PolicySimulation` parses the JSON emitted by `policy.py`, validates selected
+orders and routes against `city_graph.json`, and produces a typed route/risk
+result for headless smoke tests and later world-system integration.

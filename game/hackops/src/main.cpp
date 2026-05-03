@@ -1,4 +1,5 @@
 #include "next/ops/ops_workspace.h"
+#include "next/ops/policy_simulation.h"
 #include "next/ops/python_worker.h"
 
 #include <cstdlib>
@@ -14,13 +15,14 @@ struct Options {
     bool reset = false;
     bool list = false;
     bool runPolicy = false;
+    bool runSim = false;
     bool help = false;
 };
 
 void PrintUsage() {
     std::cout
         << "Usage: hackops_demo [--workspace path] [--reset] [--snapshot name] [--list]\n"
-        << "                    [--run-policy] [--python executable]\n"
+        << "                    [--run-policy] [--run-sim] [--python executable]\n"
         << "\n"
         << "Creates the HackOps maintenance-window workspace without starting the renderer.\n";
 }
@@ -50,6 +52,9 @@ bool ParseArgs(int argc, char** argv, Options& options) {
             options.list = true;
         } else if (arg == "--run-policy") {
             options.runPolicy = true;
+        } else if (arg == "--run-sim") {
+            options.runPolicy = true;
+            options.runSim = true;
         } else if (arg == "--python") {
             if (!ReadValue(i, argc, argv, options.pythonExecutable)) {
                 return false;
@@ -133,6 +138,18 @@ int main(int argc, char** argv) {
         }
         if (!result.Succeeded()) {
             return 1;
+        }
+
+        if (options.runSim) {
+            Next::PolicySimulationResult simResult;
+            if (!Next::SimulatePolicyJson(workspace, result.stdoutText, &simResult)) {
+                std::cout << "sim_result=" << Next::PolicySimulationResultToJson(simResult) << "\n";
+                return 1;
+            }
+            std::cout << "sim_result=" << Next::PolicySimulationResultToJson(simResult) << "\n";
+            std::cout << "sim_accepted=" << (simResult.accepted ? "true" : "false") << "\n";
+            std::cout << "sim_final_witness_risk=" << simResult.finalWitnessRisk << "\n";
+            std::cout << "sim_risk_delta=" << simResult.riskDelta << "\n";
         }
     }
 

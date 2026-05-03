@@ -51,12 +51,16 @@ jobs:
             --workspace /tmp/next-hackops-ci \
             --snapshot ci \
             --run-policy \
+            --run-sim \
             --list | tee /tmp/hackops-policy-ci.txt
           test -f /tmp/next-hackops-ci/policy.py
           test -f /tmp/next-hackops-ci/orders.log
           test -f /tmp/next-hackops-ci/city_graph.json
           test -d /tmp/next-hackops-ci/snapshots
           grep '"route_id": "route.loading-docks"' /tmp/hackops-policy-ci.txt
+          grep 'sim_accepted=true' /tmp/hackops-policy-ci.txt
+          grep 'sim_final_witness_risk=55' /tmp/hackops-policy-ci.txt
+          grep 'sim_risk_delta=-16' /tmp/hackops-policy-ci.txt
           printf 'raise SystemExit(7)\n' > /tmp/next-hackops-ci/policy.py
           if out/build/terminal-dev/bin/hackops_demo \
             --workspace /tmp/next-hackops-ci \
@@ -65,3 +69,15 @@ jobs:
             exit 1
           fi
           grep 'policy_exit=7' /tmp/hackops-policy-fail-ci.txt
+          printf '%s\n' \
+            'import json' \
+            'print(json.dumps({"order_id": "order.demo", "route_id": "route.unknown"}))' \
+            > /tmp/next-hackops-ci/policy.py
+          if out/build/terminal-dev/bin/hackops_demo \
+            --workspace /tmp/next-hackops-ci \
+            --run-policy \
+            --run-sim > /tmp/hackops-sim-reject-ci.txt; then
+            echo "expected simulation rejection"
+            exit 1
+          fi
+          grep 'unknown route_id: route.unknown' /tmp/hackops-sim-reject-ci.txt

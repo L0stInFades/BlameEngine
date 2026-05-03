@@ -40,6 +40,7 @@ out/build/terminal-dev/bin/hackops_demo \
   --workspace /tmp/next-hackops-maintenance-window \
   --snapshot smoke \
   --run-policy \
+  --run-sim \
   --list
 ```
 
@@ -56,7 +57,7 @@ ctest --test-dir out/build/windows-dx12-dev -C Debug --output-on-failure
 ## Current Module Boundary
 
 - `engine/terminal`: real Neovim external UI integration.
-- `engine/ops`: controlled workspaces for real-code gameplay.
+- `engine/ops`: controlled workspaces and policy simulation for real-code gameplay.
 - `game/hackops`: headless HackOps target for development and CI.
 - `PythonWorker`: isolated process runner for workspace `policy.py` scripts.
 - `tools/nvim_surface_cpp_probe`: command-line smoke test for `NvimSurface`.

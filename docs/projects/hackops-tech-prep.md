@@ -88,10 +88,10 @@ Verified locally and in CI:
 
 Next steps:
 
-- Add `PythonWorker` to run `policy.py` in an isolated process.
-- Add `run_sim` to consume worker output and produce a route/risk result.
 - Feed the generated workspace into `NvimSurface` so the editor opens the actual
   task files.
+- Persist task state so subsequent gameplay systems can consume workspace
+  results without scraping command output.
 
 ## Third Spike: PythonWorker
 
@@ -120,9 +120,48 @@ Verified locally and in CI:
 
 Next steps:
 
-- Convert worker stdout into a typed `PolicyResult`.
-- Add `run_sim` that scores witness risk and route consequences.
 - Add timeout fixtures so infinite-loop player code is part of the test matrix.
+- Feed the generated workspace into `NvimSurface` so the editor opens the actual
+  task files.
+
+## Fourth Spike: Policy Simulation
+
+The fourth executable research artifact is:
+
+```text
+engine/ops/include/next/ops/policy_simulation.h
+engine/ops/src/policy_simulation.cpp
+```
+
+It validates the first closed real-code gameplay loop. A player script chooses
+an order and route by emitting JSON; engine code parses that result, validates
+it against the generated `city_graph.json`, scores route cost, and turns it into
+a typed witness-risk outcome.
+
+`hackops_demo --run-policy --run-sim` now prints both the raw policy stdout and
+stable simulation fields:
+
+```text
+sim_accepted=true
+sim_final_witness_risk=55
+sim_risk_delta=-16
+```
+
+Verified locally and in CI:
+
+- `hackops_demo --reset --workspace /tmp/next-hackops-ci --snapshot ci --run-policy --run-sim --list`
+- CI asserts the default policy selects `route.loading-docks` and reduces witness
+  risk from `71` to `55`.
+- Invalid policy output or unknown IDs return a rejected simulation result and a
+  non-zero `hackops_demo` process exit.
+
+Next steps:
+
+- Add timeout fixtures so infinite-loop player code is part of the test matrix.
+- Persist simulation state into the workspace so later world systems can consume
+  it instead of parsing stdout.
+- Feed the generated workspace into `NvimSurface` so the editor opens the actual
+  task files.
 
 ## Why This Matters
 
