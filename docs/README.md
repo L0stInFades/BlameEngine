@@ -33,6 +33,8 @@
 5. `docs/05-scripting-quests.md`
 6. `docs/07-milestones.md`
 7. `docs/08-development-workflow.md`
+8. `docs/O3DE_METAL_ADAPTATION.md`
+9. `docs/RHI_METAL_SPLIT.md`
 
 ## Smoke 命令
 

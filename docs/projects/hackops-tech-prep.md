@@ -43,12 +43,39 @@ Verified locally:
   config and writes a snapshot.
 - The C++ probe can edit and save a `/tmp` copy through `nvim_input`.
 
+## Current Spike: Minimal Policy Loop
+
+The first game target is:
+
+```text
+game/hackops/
+```
+
+`hackops_demo` keeps the loop deliberately small:
+
+- opens a Python policy file in `NvimSurface`
+- writes a terminal snapshot for smoke verification
+- executes the policy with the host Python runtime
+- maps the printed score to a simulated world order state
+
+Run it through the terminal preset:
+
+```bash
+cmake --preset terminal-dev
+cmake --build --preset terminal-dev
+out/build/terminal-dev/bin/hackops_demo \
+  --policy tools/nvim_surface_probe/sample_policy.py \
+  --snapshot /tmp/hackops-policy-snapshot.txt
+```
+
 Current limitations:
 
 - POSIX process launch is verified locally; Windows `CreateProcess` launch code
   is present but needs verification on a Windows machine.
 - Main-grid text rendering works; floating grids, external cmdline UI,
   highlight/style tables, mouse, IME, and renderer integration are not complete.
+- The policy loop still uses direct host Python execution. The production path
+  still needs `engine/sandbox`, resource budgets, and a proper World API bridge.
 
 ## Why This Matters
 

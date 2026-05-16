@@ -19,6 +19,19 @@ cmake --preset terminal-dev
 cmake --build --preset terminal-dev
 ```
 
+Run the first HackOps policy loop:
+
+```bash
+out/build/terminal-dev/bin/hackops_demo \
+  --policy tools/nvim_surface_probe/sample_policy.py \
+  --snapshot /tmp/hackops-policy-snapshot.txt
+```
+
+This opens the policy in the C++ Neovim surface, executes the policy with
+`python3`, and maps the printed score into a small world-state decision. It is
+the current shortest playable loop while renderer, sandbox, and World API work
+are still being built out.
+
 Run the C++ Neovim probe:
 
 ```bash
@@ -78,6 +91,7 @@ Use build/HLSL-only mode on Windows CI runners without an attached DX12U GPU:
 
 - `engine/terminal`: real Neovim external UI integration.
 - `tools/nvim_surface_cpp_probe`: command-line smoke test for `NvimSurface`.
+- `game/hackops`: minimal policy-to-world-state executable.
 - `tools/nvim_surface_probe`: Python reference spike.
 - `docs/projects/hackops-tech-prep.md`: HackOps technical prep notes.
 

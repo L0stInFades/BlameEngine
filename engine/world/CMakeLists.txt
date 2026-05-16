@@ -20,13 +20,13 @@ add_library(next_world STATIC
 target_include_directories(next_world
     PUBLIC
         ${CMAKE_SOURCE_DIR}/engine/world/include
+        ${CMAKE_SOURCE_DIR}/engine/renderer/include
     PRIVATE
         ${CMAKE_SOURCE_DIR}/engine/foundation/include
-        ${CMAKE_SOURCE_DIR}/engine/renderer/include
+        ${CMAKE_SOURCE_DIR}/engine/compression/include
         ${CMAKE_SOURCE_DIR}/engine/runtime/include
         ${CMAKE_SOURCE_DIR}/engine/jobsystem/include
         ${CMAKE_SOURCE_DIR}/engine/profiler/include
-        ${CMAKE_SOURCE_DIR}/engine/game/include
 )
 
 # Link libraries
@@ -34,13 +34,11 @@ target_link_libraries(next_world
     PUBLIC
         next_foundation
     PRIVATE
-        next_log
+        next_compression
     PUBLIC
-        next_renderer
         next_runtime
         next_jobsystem
         next_profiler
-        next_game
 )
 
 # Windows-specific settings
@@ -68,6 +66,8 @@ else()
     target_compile_options(next_world PRIVATE
         -Wall
         -Wextra
+        -Wformat=2
+        -Werror=format
         -Wno-unused-parameter
     )
 endif()

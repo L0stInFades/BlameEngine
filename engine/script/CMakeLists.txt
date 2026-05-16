@@ -29,18 +29,14 @@ add_library(next_script STATIC
 target_include_directories(next_script PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/engine/runtime/include
-    ${CMAKE_SOURCE_DIR}/engine/renderer/include
     ${CMAKE_SOURCE_DIR}/engine/foundation/include
     ${CMAKE_SOURCE_DIR}/engine/platform/include
-    ${CMAKE_SOURCE_DIR}/engine/log/include
 )
 
 # 链接依赖
 target_link_libraries(next_script PUBLIC
     next_runtime
-    next_renderer
     next_foundation
-    next_log
 )
 
 # Lua库集成（可选）
@@ -80,6 +76,8 @@ else()
     target_compile_options(next_script PRIVATE
         -Wall
         -Wextra
+        -Wformat=2
+        -Werror=format
         -Wno-unused-parameter
     )
 endif()

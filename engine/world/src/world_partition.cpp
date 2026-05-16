@@ -60,15 +60,18 @@ void WorldPartition::Update(float deltaTime, const Vec3& cameraPosition, const V
 
     // Update statistics
     stats_.loadedCells = 0;
+    stats_.queuedCells = 0;
     stats_.loadingCells = 0;
-    stats_.queuedCells = static_cast<uint32_t>(loadQueue_.size());
     stats_.totalCells = static_cast<uint32_t>(cells_.size());
 
     uint64_t totalMemoryBytes = 0;
     for (const auto& [coord, cell] : cells_) {
+        (void)coord;
         if (cell->state == CellLoadState::Loaded) {
             stats_.loadedCells++;
             totalMemoryBytes += cell->metadata.memorySize;
+        } else if (cell->state == CellLoadState::Queued) {
+            stats_.queuedCells++;
         } else if (cell->state == CellLoadState::Loading ||
                    cell->state == CellLoadState::Decompressing ||
                    cell->state == CellLoadState::Uploading) {
@@ -261,7 +264,33 @@ void WorldPartition::UpdateCellState(const CellCoord& coord, CellLoadState newSt
 }
 
 WorldPartition::Statistics WorldPartition::GetStatistics() const {
-    return stats_;
+    Statistics stats = stats_;
+    stats.loadedCells = 0;
+    stats.loadingCells = 0;
+    stats.queuedCells = 0;
+    stats.totalCells = cells_.size();
+
+    uint64_t totalMemoryBytes = 0;
+    for (const auto& [coord, cell] : cells_) {
+        (void)coord;
+        if (!cell) {
+            continue;
+        }
+
+        if (cell->IsLoaded()) {
+            stats.loadedCells++;
+            totalMemoryBytes += cell->metadata.memorySize;
+        } else if (cell->state == CellLoadState::Queued) {
+            stats.queuedCells++;
+        } else if (cell->state == CellLoadState::Loading ||
+                   cell->state == CellLoadState::Decompressing ||
+                   cell->state == CellLoadState::Uploading) {
+            stats.loadingCells++;
+        }
+    }
+
+    stats.memoryUsageMB = totalMemoryBytes / (1024 * 1024);
+    return stats;
 }
 
 void WorldPartition::Shutdown() {

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include <string>
 
 namespace Next {
@@ -27,12 +28,17 @@ struct AssetHeader {
     
     static constexpr uint32_t MAGIC = 0x4E455854; // 'NEXT'
     static constexpr uint32_t CURRENT_VERSION = 1;
-    
+
+    bool HasValidName() const {
+        return name[0] != '\0' && std::memchr(name, '\0', sizeof(name)) != nullptr;
+    }
+
     bool Validate() const {
         return magic == MAGIC && 
                version == CURRENT_VERSION &&
                static_cast<uint32_t>(assetType) > 0 &&
-               static_cast<uint32_t>(assetType) < static_cast<uint32_t>(AssetType::Count);
+               static_cast<uint32_t>(assetType) < static_cast<uint32_t>(AssetType::Count) &&
+               HasValidName();
     }
 };
 
@@ -138,12 +144,18 @@ struct PackageHeader {
     
     static constexpr uint32_t MAGIC = 0x4E504B47; // 'NPKG'
     static constexpr uint32_t CURRENT_VERSION = 1;
+
+    bool HasValidName() const {
+        return name[0] != '\0' &&
+               std::memchr(name, '\0', sizeof(name)) != nullptr;
+    }
     
     bool Validate() const {
         return magic == MAGIC &&
                version == CURRENT_VERSION &&
                indexOffset >= sizeof(PackageHeader) &&
-               dataOffset > indexOffset;
+               dataOffset > indexOffset &&
+               HasValidName();
     }
 };
 

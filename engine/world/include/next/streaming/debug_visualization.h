@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <memory>
+#include <functional>
 
 namespace Next {
 namespace Streaming {
@@ -162,6 +163,10 @@ struct DebugVisualizationConfig {
     // Camera control
     bool allowCameraControl = true;  // Allow debug camera to fly around
 
+    // Cell sizing — must match WorldPartitionConfig::cellSize so cell borders,
+    // text anchors, and heatmap quantization match the streaming partition.
+    float cellSize = 64.0f;
+
     DebugVisualizationConfig() = default;
 };
 
@@ -216,6 +221,28 @@ public:
 
     // Screenshot/capture
     void CaptureVisualization(const std::string& filename);
+
+    // Renderer integration: install sinks the GPU layer can use to rasterize
+    // accumulated debug primitives. The streaming module is renderer-agnostic
+    // and only buffers DebugLine/DebugBox/DebugText into vectors; the renderer
+    // (or an editor/tool) installs sinks here to drain them every Render() pass.
+    // Leaving them unset is fine — Render() then queues primitives for later
+    // pickup and the caller can pull them via the public Get*() accessors.
+    using LineSinkFn = std::function<void(const std::vector<DebugLine>&,
+                                          const Mat4& view, const Mat4& projection)>;
+    using BoxSinkFn  = std::function<void(const std::vector<DebugBox>&,
+                                          const Mat4& view, const Mat4& projection)>;
+    using TextSinkFn = std::function<void(const std::vector<DebugText>&,
+                                          const Mat4& view, const Mat4& projection)>;
+    void SetLineSink(LineSinkFn fn) { lineSink_ = std::move(fn); }
+    void SetBoxSink(BoxSinkFn fn)   { boxSink_  = std::move(fn); }
+    void SetTextSink(TextSinkFn fn) { textSink_ = std::move(fn); }
+
+    // Read-only buffer accessors for renderer integrations that prefer pull
+    // over push (e.g. an ImGui debug panel rendering on its own pass).
+    const std::vector<DebugLine>& GetLines() const { return lines_; }
+    const std::vector<DebugBox>&  GetBoxes() const { return boxes_; }
+    const std::vector<DebugText>& GetTexts() const { return texts_; }
 
     // Cleanup
     void Shutdown();
@@ -274,6 +301,11 @@ private:
     std::vector<DebugLine> lines_;
     std::vector<DebugBox> boxes_;
     std::vector<DebugText> texts_;
+
+    // Renderer sinks (set by integration layer; nullptr → no GPU pass).
+    LineSinkFn lineSink_;
+    BoxSinkFn  boxSink_;
+    TextSinkFn textSink_;
 
     // Current frame
     uint64_t currentFrame_;

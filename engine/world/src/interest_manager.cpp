@@ -2,6 +2,7 @@
 #include "next/foundation/logger.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace Next {
 namespace Streaming {
@@ -54,6 +55,8 @@ void InterestManager::Update(float deltaTime) {
         UpdateInterestRegions();
         lastRegionUpdateFrame_ = currentFrame_;
     }
+
+    UpdateStatistics();
 }
 
 uint64_t InterestManager::AddInterestPoint(const InterestPoint& point) {
@@ -407,6 +410,31 @@ void InterestManager::UpdateInterestRegions() {
 
         r.cells = GetCellsInRegion(r.center, r.radius);
         interestRegions_.push_back(std::move(r));
+    }
+}
+
+void InterestManager::UpdateStatistics() {
+    stats_.activeInterestPoints = static_cast<uint32_t>(interestPoints_.size());
+    stats_.highInterestCells = 0;
+    stats_.mediumInterestCells = 0;
+    stats_.lowInterestCells = 0;
+
+    std::unordered_set<CellCoord, CellCoord::Hash> countedCells;
+    for (const InterestRegion& region : interestRegions_) {
+        for (const CellCoord& coord : region.cells) {
+            if (!countedCells.insert(coord).second) {
+                continue;
+            }
+
+            const float interest = CalculateCellInterest(coord);
+            if (interest >= 2.0f) {
+                stats_.highInterestCells++;
+            } else if (interest >= 1.0f) {
+                stats_.mediumInterestCells++;
+            } else if (interest > 0.0f) {
+                stats_.lowInterestCells++;
+            }
+        }
     }
 }
 

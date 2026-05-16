@@ -2,7 +2,7 @@
 #include "next/runtime/world.h"
 #include "next/runtime/entity.h"
 #include "next/runtime/event_bus.h"
-#include "next/log/log.h"
+#include "next/foundation/logger.h"
 #include "next/serialization/serialization.h"
 
 #include <fstream>
@@ -17,6 +17,30 @@ namespace Next {
 
 namespace {
 
+class TaskLogStream {
+public:
+    explicit TaskLogStream(LogLevel level)
+        : level_(level) {}
+
+    ~TaskLogStream() {
+        Logger::Log(level_, "%s", stream_.str().c_str());
+    }
+
+    template <typename T>
+    TaskLogStream& operator<<(const T& value) {
+        stream_ << value;
+        return *this;
+    }
+
+private:
+    LogLevel level_;
+    std::ostringstream stream_;
+};
+
+#define TASK_LOG_INFO() TaskLogStream(::Next::LogLevel::Info)
+#define TASK_LOG_WARN() TaskLogStream(::Next::LogLevel::Warning)
+#define TASK_LOG_ERROR() TaskLogStream(::Next::LogLevel::Error)
+
 void WarnUnsupportedConditionOnce(const char* label) {
     static std::unordered_map<std::string, bool> warned;
     if (warned[label]) {
@@ -24,7 +48,7 @@ void WarnUnsupportedConditionOnce(const char* label) {
     }
 
     warned[label] = true;
-    NEXT_LOG_WARN() << "Condition evaluation for '" << label
+    TASK_LOG_WARN() << "Condition evaluation for '" << label
                     << "' is not backed by runtime data yet; returning false conservatively";
 }
 
@@ -126,7 +150,7 @@ bool ConditionSet::Evaluate(const World* world) const {
 // ============================================================================
 
 bool Action::Execute(const World* world) const {
-    NEXT_LOG_INFO() << "Action::Execute: Executing action type " << static_cast<int>(type);
+    TASK_LOG_INFO() << "Action::Execute: Executing action type " << static_cast<int>(type);
 
     switch (type) {
         case ActionType::None:
@@ -134,27 +158,27 @@ bool Action::Execute(const World* world) const {
 
         case ActionType::TriggerDialogue: {
             const char* npcId = params.strings.count("npcId") ? params.strings.at("npcId").c_str() : "unknown";
-            NEXT_LOG_INFO() << "Triggering dialogue: " << npcId;
+            TASK_LOG_INFO() << "Triggering dialogue: " << npcId;
             return true;
         }
 
         case ActionType::SpawnNPC: {
             const char* npcId = params.strings.count("npcId") ? params.strings.at("npcId").c_str() : "unknown";
-            NEXT_LOG_INFO() << "Spawning NPC: " << npcId;
+            TASK_LOG_INFO() << "Spawning NPC: " << npcId;
             return true;
         }
 
         case ActionType::GiveItem: {
             int64_t count = params.ints.count("count") ? params.ints.at("count") : 1;
             const char* itemId = params.strings.count("itemId") ? params.strings.at("itemId").c_str() : "unknown";
-            NEXT_LOG_INFO() << "Giving item: " << itemId << " x " << count;
+            TASK_LOG_INFO() << "Giving item: " << itemId << " x " << count;
             return true;
         }
 
         case ActionType::SetWorldState: {
             const char* key = params.strings.count("key") ? params.strings.at("key").c_str() : "unknown";
             const char* value = params.strings.count("value") ? params.strings.at("value").c_str() : "unknown";
-            NEXT_LOG_INFO() << "Setting world state: " << key << " = " << value;
+            TASK_LOG_INFO() << "Setting world state: " << key << " = " << value;
             return true;
         }
 
@@ -162,37 +186,37 @@ bool Action::Execute(const World* world) const {
             float x = params.floats.count("x") ? params.floats.at("x") : 0.0f;
             float y = params.floats.count("y") ? params.floats.at("y") : 0.0f;
             float z = params.floats.count("z") ? params.floats.at("z") : 0.0f;
-            NEXT_LOG_INFO() << "Teleporting to: (" << x << ", " << y << ", " << z << ")";
+            TASK_LOG_INFO() << "Teleporting to: (" << x << ", " << y << ", " << z << ")";
             return true;
         }
 
         case ActionType::EnableTask: {
             const char* taskId = params.strings.count("taskId") ? params.strings.at("taskId").c_str() : "unknown";
-            NEXT_LOG_INFO() << "Enabling task: " << taskId;
+            TASK_LOG_INFO() << "Enabling task: " << taskId;
             return true;
         }
 
         case ActionType::CompleteTask: {
             const char* taskId = params.strings.count("taskId") ? params.strings.at("taskId").c_str() : "unknown";
-            NEXT_LOG_INFO() << "Completing task: " << taskId;
+            TASK_LOG_INFO() << "Completing task: " << taskId;
             return true;
         }
 
         case ActionType::FailTask: {
             const char* taskId = params.strings.count("taskId") ? params.strings.at("taskId").c_str() : "unknown";
-            NEXT_LOG_INFO() << "Failing task: " << taskId;
+            TASK_LOG_INFO() << "Failing task: " << taskId;
             return true;
         }
 
         case ActionType::ShowNotification: {
             const char* message = params.strings.count("message") ? params.strings.at("message").c_str() : "unknown";
-            NEXT_LOG_INFO() << "Showing notification: " << message;
+            TASK_LOG_INFO() << "Showing notification: " << message;
             return true;
         }
 
         case ActionType::PlayCinematic: {
             const char* cinematicId = params.strings.count("cinematicId") ? params.strings.at("cinematicId").c_str() : "unknown";
-            NEXT_LOG_INFO() << "Playing cinematic: " << cinematicId;
+            TASK_LOG_INFO() << "Playing cinematic: " << cinematicId;
             return true;
         }
 
@@ -204,7 +228,7 @@ bool Action::Execute(const World* world) const {
             if (customExecutor) {
                 return customExecutor(world, params);
             }
-            NEXT_LOG_WARN() << "Custom action has no executor";
+            TASK_LOG_WARN() << "Custom action has no executor";
             return false;
 
         default:
@@ -298,9 +322,9 @@ void TaskInstance::SetGoalAchieved(const std::string& goalId, bool achieved) {
 
 TaskExecutor::TaskExecutor(World* world, EventBus* eventBus, const TaskExecutorConfig& config)
     : world_(world)
-    , eventBus_(eventBus)
     , config_(config)
 {
+    (void)eventBus;
     std::memset(&stats_, 0, sizeof(stats_));
 }
 
@@ -314,7 +338,7 @@ void TaskExecutor::Initialize() {
     }
 
     initialized_ = true;
-    NEXT_LOG_INFO() << "TaskExecutor::Initialize: Task executor initialized";
+    TASK_LOG_INFO() << "TaskExecutor::Initialize: Task executor initialized";
 }
 
 void TaskExecutor::Shutdown() {
@@ -326,7 +350,7 @@ void TaskExecutor::Shutdown() {
 
     taskInstances_.clear();
     initialized_ = false;
-    NEXT_LOG_INFO() << "TaskExecutor::Shutdown: Task executor shut down";
+    TASK_LOG_INFO() << "TaskExecutor::Shutdown: Task executor shut down";
 }
 
 void TaskExecutor::Update(float deltaTime) {
@@ -372,7 +396,7 @@ void TaskExecutor::UpdateCurrentStep(TaskInstance* instance) {
                 ExecuteActions(step->onStartActions);
                 MarkStateDirty();
 
-                NEXT_LOG_INFO() << "TaskExecutor: Starting step '" << step->id << "' of task '" << instance->definition->id << "'";
+                TASK_LOG_INFO() << "TaskExecutor: Starting step '" << step->id << "' of task '" << instance->definition->id << "'";
             }
         }
         return;
@@ -389,7 +413,7 @@ void TaskExecutor::UpdateCurrentStep(TaskInstance* instance) {
         ExecuteActions(step->onCompleteActions);
         MarkStateDirty();
 
-        NEXT_LOG_INFO() << "TaskExecutor: Completed step '" << step->id << "' of task '" << instance->definition->id << "'";
+        TASK_LOG_INFO() << "TaskExecutor: Completed step '" << step->id << "' of task '" << instance->definition->id << "'";
 
         // 找到下一步骤
         // 这里简化处理：实际应该根据步骤的连接关系查找
@@ -402,7 +426,7 @@ void TaskExecutor::UpdateCurrentStep(TaskInstance* instance) {
                     ExecuteActions(s.onStartActions);
                     MarkStateDirty();
 
-                    NEXT_LOG_INFO() << "TaskExecutor: Starting next step '" << s.id << "'";
+                    TASK_LOG_INFO() << "TaskExecutor: Starting next step '" << s.id << "'";
                 }
                 break;
             }
@@ -415,7 +439,7 @@ void TaskExecutor::UpdateCurrentStep(TaskInstance* instance) {
         ExecuteActions(step->onFailActions);
         MarkStateDirty();
 
-        NEXT_LOG_WARN() << "TaskExecutor: Step '" << step->id << "' of task '" << instance->definition->id << "' failed";
+        TASK_LOG_WARN() << "TaskExecutor: Step '" << step->id << "' of task '" << instance->definition->id << "' failed";
     }
 }
 
@@ -460,12 +484,12 @@ void TaskExecutor::CheckTaskFailure(TaskInstance* instance) {
 
 TaskInstance* TaskExecutor::StartTask(const TaskDefinition* definition) {
     if (!definition) {
-        NEXT_LOG_ERROR() << "TaskExecutor::StartTask: Invalid task definition";
+        TASK_LOG_ERROR() << "TaskExecutor::StartTask: Invalid task definition";
         return nullptr;
     }
 
     if (!CanStartTask(definition)) {
-        NEXT_LOG_WARN() << "TaskExecutor::StartTask: Task '" << definition->id << "' cannot be started (conditions not met)";
+        TASK_LOG_WARN() << "TaskExecutor::StartTask: Task '" << definition->id << "' cannot be started (conditions not met)";
         return nullptr;
     }
 
@@ -487,7 +511,7 @@ TaskInstance* TaskExecutor::StartTask(const TaskDefinition* definition) {
     stats_.activeTasks++;
     MarkStateDirty();
 
-    NEXT_LOG_INFO() << "TaskExecutor::StartTask: Started task '" << definition->id << "' (instance: " << instanceId << ")";
+    TASK_LOG_INFO() << "TaskExecutor::StartTask: Started task '" << definition->id << "' (instance: " << instanceId << ")";
 
     return ptr;
 }
@@ -511,7 +535,7 @@ void TaskExecutor::CompleteTask(const std::string& instanceId) {
         stats_.totalTasksCompleted;
     MarkStateDirty();
 
-    NEXT_LOG_INFO() << "TaskExecutor::CompleteTask: Completed task '" << instance->definition->id << "' (instance: " << instanceId << ", time: " << completionTime << " s)";
+    TASK_LOG_INFO() << "TaskExecutor::CompleteTask: Completed task '" << instance->definition->id << "' (instance: " << instanceId << ", time: " << completionTime << " s)";
 
     // 启动后续任务
     if (instance->definition) {
@@ -538,7 +562,7 @@ void TaskExecutor::FailTask(const std::string& instanceId) {
     stats_.activeTasks--;
     MarkStateDirty();
 
-    NEXT_LOG_WARN() << "TaskExecutor::FailTask: Failed task '" << instance->definition->id << "' (instance: " << instanceId << ")";
+    TASK_LOG_WARN() << "TaskExecutor::FailTask: Failed task '" << instance->definition->id << "' (instance: " << instanceId << ")";
 }
 
 void TaskExecutor::AbandonTask(const std::string& instanceId) {
@@ -550,7 +574,7 @@ void TaskExecutor::AbandonTask(const std::string& instanceId) {
     stats_.activeTasks--;
     MarkStateDirty();
 
-    NEXT_LOG_INFO() << "TaskExecutor::AbandonTask: Abandoned task '" << instance->definition->id << "' (instance: " << instanceId << ")";
+    TASK_LOG_INFO() << "TaskExecutor::AbandonTask: Abandoned task '" << instance->definition->id << "' (instance: " << instanceId << ")";
 }
 
 TaskInstance* TaskExecutor::GetTaskInstance(const std::string& instanceId) {
@@ -584,12 +608,12 @@ std::vector<TaskInstance*> TaskExecutor::GetTasksByStatus(TaskStatus status) {
 
 void TaskExecutor::RegisterTaskDefinition(const TaskDefinition& definition) {
     taskDefinitions_[definition.id] = definition;
-    NEXT_LOG_INFO() << "TaskExecutor::RegisterTaskDefinition: Registered task '" << definition.id << "': " << definition.name;
+    TASK_LOG_INFO() << "TaskExecutor::RegisterTaskDefinition: Registered task '" << definition.id << "': " << definition.name;
 }
 
 void TaskExecutor::UnregisterTaskDefinition(const std::string& taskId) {
     taskDefinitions_.erase(taskId);
-    NEXT_LOG_INFO() << "TaskExecutor::UnregisterTaskDefinition: Unregistered task '" << taskId << "'";
+    TASK_LOG_INFO() << "TaskExecutor::UnregisterTaskDefinition: Unregistered task '" << taskId << "'";
 }
 
 const TaskDefinition* TaskExecutor::GetTaskDefinition(const std::string& taskId) const {
@@ -652,11 +676,11 @@ bool TaskExecutor::ReplanTask(const std::string& instanceId, const std::string& 
 
     TaskInstance* instance = it->second.get();
     if (!instance->definition || !instance->definition->replannable) {
-        NEXT_LOG_WARN() << "TaskExecutor::ReplanTask: Task '" << instance->definition->id << "' is not replannable";
+        TASK_LOG_WARN() << "TaskExecutor::ReplanTask: Task '" << instance->definition->id << "' is not replannable";
         return false;
     }
 
-    NEXT_LOG_INFO() << "TaskExecutor::ReplanTask: Replanning task '" << instance->definition->id << "' (reason: " << reason << ")";
+    TASK_LOG_INFO() << "TaskExecutor::ReplanTask: Replanning task '" << instance->definition->id << "' (reason: " << reason << ")";
 
     // 简化实现：重置当前步骤状态
     if (!instance->currentStepId.empty()) {
@@ -669,7 +693,7 @@ bool TaskExecutor::ReplanTask(const std::string& instanceId, const std::string& 
                 const TaskStep* altStep = instance->definition->GetStep(altStepId);
                 if (altStep && altStep->CanStart(world_)) {
                     instance->currentStepId = altStepId;
-                    NEXT_LOG_INFO() << "Switched to alternative step '" << altStepId << "'";
+                    TASK_LOG_INFO() << "Switched to alternative step '" << altStepId << "'";
                     return true;
                 }
             }
@@ -680,7 +704,7 @@ bool TaskExecutor::ReplanTask(const std::string& instanceId, const std::string& 
 }
 
 bool TaskExecutor::SaveState(const std::string& filePath) {
-    NEXT_LOG_INFO() << "TaskExecutor::SaveState: Saving state to '" << filePath << "'";
+    TASK_LOG_INFO() << "TaskExecutor::SaveState: Saving state to '" << filePath << "'";
 
     // Versioned JSON save (definitions are assumed to be registered externally).
     ::Next::JSONSerializer ser;
@@ -762,29 +786,29 @@ bool TaskExecutor::SaveState(const std::string& filePath) {
 
     auto res = ser.SaveToFile(filePath);
     if (!res.IsSuccess()) {
-        NEXT_LOG_ERROR() << "TaskExecutor::SaveState: Failed (" << res.errorMessage << ")";
+        TASK_LOG_ERROR() << "TaskExecutor::SaveState: Failed (" << res.errorMessage << ")";
         return false;
     }
     return true;
 }
 
 bool TaskExecutor::LoadState(const std::string& filePath) {
-    NEXT_LOG_INFO() << "TaskExecutor::LoadState: Loading state from '" << filePath << "'";
+    TASK_LOG_INFO() << "TaskExecutor::LoadState: Loading state from '" << filePath << "'";
 
     auto des = ::Next::Deserializer::LoadFromFile(filePath, ::Next::SerializationFormat::JSON);
     if (!des) {
-        NEXT_LOG_ERROR() << "TaskExecutor::LoadState: Failed to open/parse file";
+        TASK_LOG_ERROR() << "TaskExecutor::LoadState: Failed to open/parse file";
         return false;
     }
 
     if (!des->BeginObject("root")) {
-        NEXT_LOG_ERROR() << "TaskExecutor::LoadState: Missing root object";
+        TASK_LOG_ERROR() << "TaskExecutor::LoadState: Missing root object";
         return false;
     }
 
     const uint32_t version = des->ReadVersion();
     if (version != 1) {
-        NEXT_LOG_WARN() << "TaskExecutor::LoadState: Version mismatch (got " << version << ", expected 1)";
+        TASK_LOG_WARN() << "TaskExecutor::LoadState: Version mismatch (got " << version << ", expected 1)";
     }
 
     taskInstances_.clear();
@@ -802,7 +826,7 @@ bool TaskExecutor::LoadState(const std::string& filePath) {
 
             const TaskDefinition* def = GetTaskDefinition(taskId);
             if (!def) {
-                NEXT_LOG_WARN() << "TaskExecutor::LoadState: Unknown task definition '" << taskId << "', skipping instance";
+                TASK_LOG_WARN() << "TaskExecutor::LoadState: Unknown task definition '" << taskId << "', skipping instance";
                 des->EndObject();
                 continue;
             }
@@ -949,13 +973,13 @@ void TaskExecutor::FlushAutoSaveIfNeeded(bool force) {
     }
 
     if (config_.autoSavePath.empty()) {
-        NEXT_LOG_WARN() << "TaskExecutor::FlushAutoSaveIfNeeded: auto-save path is empty; skipping";
+        TASK_LOG_WARN() << "TaskExecutor::FlushAutoSaveIfNeeded: auto-save path is empty; skipping";
         autoSaveDirty_ = false;
         return;
     }
 
     if (!SaveState(config_.autoSavePath)) {
-        NEXT_LOG_ERROR() << "TaskExecutor::FlushAutoSaveIfNeeded: failed to write auto-save '"
+        TASK_LOG_ERROR() << "TaskExecutor::FlushAutoSaveIfNeeded: failed to write auto-save '"
                          << config_.autoSavePath << "'";
         return;
     }
@@ -974,7 +998,7 @@ TaskScheduler::TaskScheduler(TaskExecutor* executor, const TaskSchedulerConfig& 
 }
 
 void TaskScheduler::Initialize() {
-    NEXT_LOG_INFO() << "TaskScheduler::Initialize: Task scheduler initialized";
+    TASK_LOG_INFO() << "TaskScheduler::Initialize: Task scheduler initialized";
 }
 
 void TaskScheduler::Update(float deltaTime) {
@@ -984,7 +1008,7 @@ void TaskScheduler::Update(float deltaTime) {
 }
 
 void TaskScheduler::Shutdown() {
-    NEXT_LOG_INFO() << "TaskScheduler::Shutdown: Task scheduler shut down";
+    TASK_LOG_INFO() << "TaskScheduler::Shutdown: Task scheduler shut down";
 }
 
 bool TaskScheduler::IsTaskAvailable(const std::string& taskId) {
@@ -1129,18 +1153,18 @@ TaskReplanner::TaskReplanner(World* world, TaskExecutor* executor)
 
 void TaskReplanner::RegisterReplanRule(const std::string& taskId, const ReplanRule& rule) {
     replanRules_[taskId].push_back(rule);
-    NEXT_LOG_INFO() << "TaskReplanner::RegisterReplanRule: Registered replan rule for task '" << taskId << "'";
+    TASK_LOG_INFO() << "TaskReplanner::RegisterReplanRule: Registered replan rule for task '" << taskId << "'";
 }
 
 bool TaskReplanner::ReplanTask(TaskInstance* instance, ReplanReason reason, const std::string& description) {
     if (!instance || !instance->definition) return false;
 
     if (!EvaluateReplannability(instance)) {
-        NEXT_LOG_WARN() << "TaskReplanner::ReplanTask: Task '" << instance->definition->id << "' is not replannable";
+        TASK_LOG_WARN() << "TaskReplanner::ReplanTask: Task '" << instance->definition->id << "' is not replannable";
         return false;
     }
 
-    NEXT_LOG_INFO() << "TaskReplanner::ReplanTask: Replanning task '" << instance->definition->id << "' (reason: " << static_cast<int>(reason) << ", description: " << description << ")";
+    TASK_LOG_INFO() << "TaskReplanner::ReplanTask: Replanning task '" << instance->definition->id << "' (reason: " << static_cast<int>(reason) << ", description: " << description << ")";
 
     // 执行重规划规则
     auto it = replanRules_.find(instance->definition->id);
@@ -1157,7 +1181,7 @@ bool TaskReplanner::ReplanTask(TaskInstance* instance, ReplanReason reason, cons
                         return FindAlternativeStep(instance, instance->currentStepId);
 
                     case ReplanStrategy::DelayTask:
-                        NEXT_LOG_INFO() << "Strategy: Delay task";
+                        TASK_LOG_INFO() << "Strategy: Delay task";
                         return true;
 
                     case ReplanStrategy::FailTask:
@@ -1196,7 +1220,7 @@ bool TaskReplanner::FindAlternativeStep(TaskInstance* instance, const std::strin
             instance->SetStepStatus(stepId, StepStatus::Blocked);
             instance->SetStepStatus(altStepId, StepStatus::InProgress);
 
-            NEXT_LOG_INFO() << "Found alternative step: " << stepId << " -> " << altStepId;
+            TASK_LOG_INFO() << "Found alternative step: " << stepId << " -> " << altStepId;
             return true;
         }
     }
@@ -1205,7 +1229,7 @@ bool TaskReplanner::FindAlternativeStep(TaskInstance* instance, const std::strin
 }
 
 bool TaskReplanner::CreateRemedialTask(TaskInstance* instance, const std::string& reason) {
-    NEXT_LOG_INFO() << "Creating remedial task for: " << reason;
+    TASK_LOG_INFO() << "Creating remedial task for: " << reason;
     return false;
 }
 
@@ -1224,7 +1248,7 @@ TaskSystemManager::~TaskSystemManager() {
 
 void TaskSystemManager::Initialize(World* world, EventBus* eventBus) {
     if (initialized_) {
-        NEXT_LOG_WARN() << "TaskSystemManager::Initialize: Already initialized";
+        TASK_LOG_WARN() << "TaskSystemManager::Initialize: Already initialized";
         return;
     }
 
@@ -1241,7 +1265,7 @@ void TaskSystemManager::Initialize(World* world, EventBus* eventBus) {
 
     initialized_ = true;
 
-    NEXT_LOG_INFO() << "TaskSystemManager::Initialize: Task system initialized";
+    TASK_LOG_INFO() << "TaskSystemManager::Initialize: Task system initialized";
 }
 
 void TaskSystemManager::Update(float deltaTime) {
@@ -1263,7 +1287,11 @@ void TaskSystemManager::Shutdown() {
 
     initialized_ = false;
 
-    NEXT_LOG_INFO() << "TaskSystemManager::Shutdown: Task system shut down";
+    TASK_LOG_INFO() << "TaskSystemManager::Shutdown: Task system shut down";
 }
 
 } // namespace Next
+
+#undef TASK_LOG_INFO
+#undef TASK_LOG_WARN
+#undef TASK_LOG_ERROR

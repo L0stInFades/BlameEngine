@@ -1,11 +1,16 @@
 #include "asset_compiler.h"
 #include "obj_loader.h"
 #include "tga_loader.h"
+#include "next/compression/compression.h"
 #include "next/foundation/logger.h"
+#include "next/streaming/cell_file_format.h"
+#include <cctype>
 #include <fstream>
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
+#include <limits>
+#include <unordered_set>
 
 namespace Next {
 
@@ -28,11 +33,36 @@ static std::string AssetNameFromPath(const std::string& sourcePath, const std::s
     return in.stem().string();
 }
 
-static void CopyAssetName(char dst[64], const std::string& name) {
-    std::memset(dst, 0, 64);
-    if (name.empty()) return;
-    std::strncpy(dst, name.c_str(), 63);
-    dst[63] = '\0';
+static size_t FixedStringLength(const char* value, size_t maxSize) {
+    const void* terminator = std::memchr(value, '\0', maxSize);
+    if (!terminator) {
+        return maxSize;
+    }
+    return static_cast<const char*>(terminator) - value;
+}
+
+static void CopyFixedStringBytes(char* dst, size_t dstSize, const char* src, size_t srcSize) {
+    if (!dst || dstSize == 0) {
+        return;
+    }
+
+    std::memset(dst, 0, dstSize);
+    if (!src || srcSize == 0) {
+        return;
+    }
+
+    const size_t copySize = std::min(dstSize - 1, srcSize);
+    std::memcpy(dst, src, copySize);
+}
+
+template<size_t DstSize>
+static void CopyFixedString(char (&dst)[DstSize], const std::string& value) {
+    CopyFixedStringBytes(dst, DstSize, value.data(), value.size());
+}
+
+template<size_t DstSize, size_t SrcSize>
+static void CopyFixedString(char (&dst)[DstSize], const char (&value)[SrcSize]) {
+    CopyFixedStringBytes(dst, DstSize, value, FixedStringLength(value, SrcSize));
 }
 
 static bool WriteBytes(const std::string& outputPath, const std::vector<uint8_t>& bytes) {
@@ -43,6 +73,119 @@ static bool WriteBytes(const std::string& outputPath, const std::vector<uint8_t>
     file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     file.close();
     return file.good();
+}
+
+static bool CheckedMulSize(size_t a, size_t b, size_t& out) {
+    if (a != 0 && b > std::numeric_limits<size_t>::max() / a) {
+        return false;
+    }
+    out = a * b;
+    return true;
+}
+
+static bool CheckedAddSize(size_t a, size_t b, size_t& out) {
+    if (a > std::numeric_limits<size_t>::max() - b) {
+        return false;
+    }
+    out = a + b;
+    return true;
+}
+
+static size_t AssetPayloadOffset(AssetType type) {
+    switch (type) {
+        case AssetType::Mesh:
+            return sizeof(MeshHeader);
+        case AssetType::Texture:
+            return sizeof(TextureHeader);
+        case AssetType::Material:
+            return sizeof(MaterialHeader);
+        default:
+            return 0;
+    }
+}
+
+template<typename HeaderT>
+static bool StampAssetChecksum(std::vector<uint8_t>& bytes) {
+    if (bytes.size() < sizeof(HeaderT)) {
+        return false;
+    }
+
+    HeaderT header{};
+    std::memcpy(&header, bytes.data(), sizeof(HeaderT));
+
+    const size_t payloadSize = bytes.size() - sizeof(HeaderT);
+    if (header.common.dataSize != payloadSize) {
+        return false;
+    }
+
+    header.common.checksum = CalculateCRC64(bytes.data() + sizeof(HeaderT), payloadSize);
+    std::memcpy(bytes.data(), &header, sizeof(HeaderT));
+    return true;
+}
+
+static bool ValidateCompiledAssetChecksum(const AssetHeader& header, const std::vector<uint8_t>& bytes) {
+    if (header.checksum == 0) {
+        return true;
+    }
+
+    const size_t payloadOffset = AssetPayloadOffset(header.assetType);
+    if (payloadOffset == 0 || bytes.size() < payloadOffset) {
+        return false;
+    }
+
+    const size_t payloadSize = bytes.size() - payloadOffset;
+    if (payloadSize != header.dataSize) {
+        return false;
+    }
+
+    return ValidateAssetChecksum(header, bytes.data() + payloadOffset);
+}
+
+static bool GetPackageInputFileSize(const std::string& assetFile, uint64_t& outFileSize) {
+    outFileSize = 0;
+    std::error_code ec;
+    const uintmax_t fileSize = std::filesystem::file_size(assetFile, ec);
+    if (ec) {
+        NEXT_LOG_ERROR("Failed to stat asset file: %s (%s)", assetFile.c_str(), ec.message().c_str());
+        return false;
+    }
+
+    constexpr uint64_t maxPackageField = std::numeric_limits<uint32_t>::max();
+    if (fileSize > static_cast<uintmax_t>(maxPackageField)) {
+        NEXT_LOG_ERROR("Asset file too large for package entry: %s (%ju bytes)",
+                       assetFile.c_str(),
+                       static_cast<uintmax_t>(fileSize));
+        return false;
+    }
+
+    outFileSize = static_cast<uint64_t>(fileSize);
+    return true;
+}
+
+static std::vector<uint8_t> BuildPackagePayload(
+    const std::vector<AssetEntry>& entries,
+    const std::vector<std::vector<uint8_t>>& assetData) {
+    size_t payloadSize = sizeof(AssetEntry) * entries.size();
+    for (const auto& data : assetData) {
+        payloadSize += data.size();
+    }
+
+    std::vector<uint8_t> payload(payloadSize);
+    uint8_t* ptr = payload.data();
+    const size_t indexBytes = sizeof(AssetEntry) * entries.size();
+    if (indexBytes != 0) {
+        std::memcpy(ptr, entries.data(), indexBytes);
+        ptr += indexBytes;
+    }
+
+    for (const auto& data : assetData) {
+        if (!data.empty()) {
+            std::memcpy(ptr, data.data(), data.size());
+            ptr += data.size();
+        }
+    }
+
+    return payload;
 }
 
 } // namespace
@@ -65,17 +208,44 @@ bool AssetCompiler::CompileMesh(const std::string& sourcePath, const std::string
         return false;
     }
 
+    constexpr size_t maxAssetField = std::numeric_limits<uint32_t>::max();
+    const size_t vertexCount = mesh.vertices.size();
+    const size_t indexCount = mesh.indices.size();
+    if (vertexCount > maxAssetField || indexCount > maxAssetField) {
+        NEXT_LOG_ERROR("CompileMesh: mesh is too large for asset header fields: %s", sourcePath.c_str());
+        return false;
+    }
+
+    const uint32_t indexType =
+        (vertexCount > static_cast<size_t>(std::numeric_limits<uint16_t>::max())) ? 1u : 0u;
+    const size_t indexStride = (indexType == 0) ? sizeof(uint16_t) : sizeof(uint32_t);
+
+    size_t vertexBytes = 0;
+    size_t indexBytes = 0;
+    size_t payloadBytes = 0;
+    size_t totalBytes = 0;
+    const size_t submeshBytes = sizeof(uint32_t) * 2u;
+    if (!CheckedMulSize(vertexCount, sizeof(ObjMeshVertex), vertexBytes) ||
+        !CheckedMulSize(indexCount, indexStride, indexBytes) ||
+        !CheckedAddSize(vertexBytes, indexBytes, payloadBytes) ||
+        !CheckedAddSize(payloadBytes, submeshBytes, payloadBytes) ||
+        payloadBytes > maxAssetField ||
+        !CheckedAddSize(sizeof(MeshHeader), payloadBytes, totalBytes)) {
+        NEXT_LOG_ERROR("CompileMesh: mesh payload is too large: %s", sourcePath.c_str());
+        return false;
+    }
+
     MeshHeader header;
     std::memset(&header, 0, sizeof(header));
     header.common.magic = AssetHeader::MAGIC;
     header.common.version = AssetHeader::CURRENT_VERSION;
     header.common.assetType = AssetType::Mesh;
-    CopyAssetName(header.common.name, AssetNameFromPath(sourcePath, outputPath));
+    CopyFixedString(header.common.name, AssetNameFromPath(sourcePath, outputPath));
 
-    header.vertexCount = static_cast<uint32_t>(mesh.vertices.size());
-    header.indexCount = static_cast<uint32_t>(mesh.indices.size());
+    header.vertexCount = static_cast<uint32_t>(vertexCount);
+    header.indexCount = static_cast<uint32_t>(indexCount);
     header.vertexStride = sizeof(ObjMeshVertex); // pos + normal + uv
-    header.indexType = (header.vertexCount > 65535) ? 1u : 0u;
+    header.indexType = indexType;
     header.vertexFormat = 0;
     header.boundingBox[0] = mesh.boundsMin[0];
     header.boundingBox[1] = mesh.boundsMin[1];
@@ -88,16 +258,13 @@ bool AssetCompiler::CompileMesh(const std::string& sourcePath, const std::string
     if (mesh.hasNormals) header.flags |= MeshHeader::HAS_NORMALS;
     if (mesh.hasUVs) header.flags |= MeshHeader::HAS_UVS;
 
-    const size_t vertexBytes = mesh.vertices.size() * sizeof(ObjMeshVertex);
-    const size_t indexBytes = mesh.indices.size() * ((header.indexType == 0) ? sizeof(uint16_t) : sizeof(uint32_t));
     const uint32_t submeshRange[2] = {0u, header.indexCount};
-    const size_t submeshBytes = sizeof(submeshRange);
 
-    header.common.dataSize = static_cast<uint32_t>(vertexBytes + indexBytes + submeshBytes);
+    header.common.dataSize = static_cast<uint32_t>(payloadBytes);
     header.common.checksum = 0;
 
     std::vector<uint8_t> out;
-    out.resize(sizeof(MeshHeader) + header.common.dataSize);
+    out.resize(totalBytes);
     uint8_t* ptr = out.data();
     std::memcpy(ptr, &header, sizeof(MeshHeader));
     ptr += sizeof(MeshHeader);
@@ -109,6 +276,10 @@ bool AssetCompiler::CompileMesh(const std::string& sourcePath, const std::string
         std::vector<uint16_t> idx16;
         idx16.reserve(mesh.indices.size());
         for (uint32_t v : mesh.indices) {
+            if (v > std::numeric_limits<uint16_t>::max()) {
+                NEXT_LOG_ERROR("CompileMesh: uint16 index out of range for %s", sourcePath.c_str());
+                return false;
+            }
             idx16.push_back(static_cast<uint16_t>(v));
         }
         std::memcpy(ptr, idx16.data(), idx16.size() * sizeof(uint16_t));
@@ -119,6 +290,11 @@ bool AssetCompiler::CompileMesh(const std::string& sourcePath, const std::string
     }
 
     std::memcpy(ptr, submeshRange, submeshBytes);
+
+    if (!StampAssetChecksum<MeshHeader>(out)) {
+        NEXT_LOG_ERROR("CompileMesh: failed to stamp checksum for %s", outputPath.c_str());
+        return false;
+    }
 
     if (!WriteBytes(outputPath, out)) {
         NEXT_LOG_ERROR("CompileMesh: failed to write %s", outputPath.c_str());
@@ -149,7 +325,7 @@ bool AssetCompiler::CompileTexture(const std::string& sourcePath, const std::str
     header.common.magic = AssetHeader::MAGIC;
     header.common.version = AssetHeader::CURRENT_VERSION;
     header.common.assetType = AssetType::Texture;
-    CopyAssetName(header.common.name, AssetNameFromPath(sourcePath, outputPath));
+    CopyFixedString(header.common.name, AssetNameFromPath(sourcePath, outputPath));
 
     header.width = static_cast<uint32_t>(img.width);
     header.height = static_cast<uint32_t>(img.height);
@@ -168,6 +344,11 @@ bool AssetCompiler::CompileTexture(const std::string& sourcePath, const std::str
     std::memcpy(out.data(), &header, sizeof(TextureHeader));
     std::memcpy(out.data() + sizeof(TextureHeader), img.pixels.data(), pixelBytes);
 
+    if (!StampAssetChecksum<TextureHeader>(out)) {
+        NEXT_LOG_ERROR("CompileTexture: failed to stamp checksum for %s", outputPath.c_str());
+        return false;
+    }
+
     if (!WriteBytes(outputPath, out)) {
         NEXT_LOG_ERROR("CompileTexture: failed to write %s", outputPath.c_str());
         return false;
@@ -184,26 +365,141 @@ bool AssetCompiler::CompileMaterial(const std::string& sourcePath, const std::st
     return WriteAssetFile(outputPath, materialData.data(), materialData.size());
 }
 
+bool AssetCompiler::CompileCell(
+    const std::string& sourcePath,
+    const std::string& outputPath,
+    const std::string& compression) {
+    NEXT_LOG_INFO("Compiling streaming cell: %s -> %s (%s)",
+                  sourcePath.c_str(), outputPath.c_str(), compression.c_str());
+
+    std::vector<uint8_t> payload;
+    if (!ReadAssetFile(sourcePath, payload)) {
+        NEXT_LOG_ERROR("CompileCell: failed to read source payload: %s", sourcePath.c_str());
+        return false;
+    }
+    if (payload.empty()) {
+        NEXT_LOG_ERROR("CompileCell: source payload is empty: %s", sourcePath.c_str());
+        return false;
+    }
+
+    std::string mode = compression;
+    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+
+    Streaming::CellFileCompression cellCompression = Streaming::CellFileCompression::None;
+    Compression::Algorithm algorithm = Compression::Algorithm::None;
+    bool shouldCompress = false;
+    if (mode == "none" || mode == "raw" || mode.empty()) {
+        cellCompression = Streaming::CellFileCompression::None;
+    } else if (mode == "lz4") {
+        cellCompression = Streaming::CellFileCompression::LZ4;
+        algorithm = Compression::Algorithm::LZ4;
+        shouldCompress = true;
+    } else if (mode == "zstd" || mode == "zstandard") {
+        cellCompression = Streaming::CellFileCompression::Zstd;
+        algorithm = Compression::Algorithm::Zstd;
+        shouldCompress = true;
+    } else {
+        NEXT_LOG_ERROR("CompileCell: unsupported compression mode: %s", compression.c_str());
+        return false;
+    }
+
+    std::vector<uint8_t> body;
+    if (shouldCompress) {
+        if (!Compression::IsAvailable(algorithm)) {
+            NEXT_LOG_ERROR("CompileCell: %s backend is unavailable", Compression::AlgorithmName(algorithm));
+            return false;
+        }
+        const uint64_t bound = Compression::CompressBound(algorithm, payload.size());
+        if (bound == 0) {
+            NEXT_LOG_ERROR("CompileCell: invalid compression bound for %s", Compression::AlgorithmName(algorithm));
+            return false;
+        }
+        body.resize(static_cast<size_t>(bound));
+        const Compression::Result result = Compression::Compress(
+            algorithm,
+            payload.data(),
+            payload.size(),
+            body.data(),
+            body.size());
+        if (!result.Succeeded()) {
+            NEXT_LOG_ERROR("CompileCell: compression failed: %s", result.message.c_str());
+            return false;
+        }
+        body.resize(static_cast<size_t>(result.bytesWritten));
+    } else {
+        body = payload;
+    }
+
+    const Streaming::CellFileHeader header = Streaming::MakeCellFileHeader(
+        cellCompression,
+        body.size(),
+        payload.size());
+
+    std::vector<uint8_t> out(sizeof(header) + body.size());
+    std::memcpy(out.data(), &header, sizeof(header));
+    std::memcpy(out.data() + sizeof(header), body.data(), body.size());
+
+    if (!WriteBytes(outputPath, out)) {
+        NEXT_LOG_ERROR("CompileCell: failed to write %s", outputPath.c_str());
+        return false;
+    }
+
+    NEXT_LOG_INFO("Compiled cell payload: %zu -> %zu bytes", payload.size(), body.size());
+    return true;
+}
+
 bool AssetCompiler::CreatePackage(const std::string& packageName,
                                  const std::vector<std::string>& assetFiles,
                                  const std::string& outputPath) {
-    NEXT_LOG_INFO("Creating package: %s with %llu assets", packageName.c_str(), assetFiles.size());
+    NEXT_LOG_INFO("Creating package: %s with %zu assets", packageName.c_str(), assetFiles.size());
     
     if (assetFiles.empty()) {
         NEXT_LOG_ERROR("No assets specified for package");
         return false;
     }
     
-    // Read all asset files
+    constexpr uint64_t maxPackageField = std::numeric_limits<uint32_t>::max();
+    const uint64_t maxIndexBytes = maxPackageField - sizeof(PackageHeader);
+    if (assetFiles.size() > maxIndexBytes / sizeof(AssetEntry)) {
+        NEXT_LOG_ERROR("Too many assets for package index: %zu", assetFiles.size());
+        return false;
+    }
+
+    std::vector<uint64_t> assetFileSizes;
+    assetFileSizes.reserve(assetFiles.size());
+    uint64_t packageDataBytes = 0;
+    for (const auto& assetFile : assetFiles) {
+        uint64_t fileSize = 0;
+        if (!GetPackageInputFileSize(assetFile, fileSize)) {
+            return false;
+        }
+        if (packageDataBytes > maxPackageField - fileSize) {
+            NEXT_LOG_ERROR("Package data section is too large after adding asset file: %s",
+                           assetFile.c_str());
+            return false;
+        }
+        packageDataBytes += fileSize;
+        assetFileSizes.push_back(fileSize);
+    }
+
     std::vector<std::vector<uint8_t>> assetData;
     std::vector<AssetEntry> entries;
+    std::unordered_set<std::string> assetNames;
     
-    uint32_t dataOffset = 0;
+    uint64_t dataOffset = 0;
     
-    for (const auto& assetFile : assetFiles) {
+    for (size_t assetIndex = 0; assetIndex < assetFiles.size(); ++assetIndex) {
+        const std::string& assetFile = assetFiles[assetIndex];
+        const uint64_t expectedFileSize = assetFileSizes[assetIndex];
         std::vector<uint8_t> data;
         if (!ReadAssetFile(assetFile, data)) {
             NEXT_LOG_ERROR("Failed to read asset file: %s", assetFile.c_str());
+            return false;
+        }
+        if (data.size() != expectedFileSize) {
+            NEXT_LOG_ERROR("Asset file changed while packaging: %s", assetFile.c_str());
             return false;
         }
         
@@ -220,33 +516,43 @@ bool AssetCompiler::CreatePackage(const std::string& packageName,
             NEXT_LOG_ERROR("Invalid asset header in: %s", assetFile.c_str());
             return false;
         }
+
+        if (!ValidateCompiledAssetChecksum(header, data)) {
+            NEXT_LOG_ERROR("Checksum validation failed for asset file: %s", assetFile.c_str());
+            return false;
+        }
         
         // Create asset entry
-        AssetEntry entry;
+        const uint32_t assetSize = static_cast<uint32_t>(data.size());
+        AssetEntry entry{};
         entry.assetType = header.assetType;
-        entry.assetSize = static_cast<uint32_t>(data.size());
-        entry.dataOffset = dataOffset;
+        entry.assetSize = assetSize;
+        entry.dataOffset = static_cast<uint32_t>(dataOffset);
         entry.compressedSize = 0; // No compression for CP3
-        entry.decompressedSize = static_cast<uint32_t>(data.size());
-        memset(entry.name, 0, sizeof(entry.name));
-        strncpy(entry.name, header.name, sizeof(entry.name) - 1);
+        entry.decompressedSize = assetSize;
+        CopyFixedString(entry.name, header.name);
+
+        const std::string assetName(entry.name);
+        if (!assetNames.insert(assetName).second) {
+            NEXT_LOG_ERROR("Duplicate asset name in package input: %s", assetName.c_str());
+            return false;
+        }
         
         entries.push_back(entry);
         assetData.push_back(std::move(data));
-        
-        dataOffset += static_cast<uint32_t>(data.size());
+
+        dataOffset += assetSize;
     }
     
     // Create package header
-    PackageHeader packageHeader;
+    PackageHeader packageHeader{};
     packageHeader.magic = PackageHeader::MAGIC;
     packageHeader.version = PackageHeader::CURRENT_VERSION;
     packageHeader.assetCount = static_cast<uint32_t>(assetFiles.size());
     packageHeader.indexOffset = sizeof(PackageHeader);
     packageHeader.dataOffset = packageHeader.indexOffset + sizeof(AssetEntry) * packageHeader.assetCount;
-    packageHeader.checksum = 0; // Would calculate in real implementation
-    memset(packageHeader.name, 0, sizeof(packageHeader.name));
-    strncpy(packageHeader.name, packageName.c_str(), sizeof(packageHeader.name) - 1);
+    packageHeader.checksum = 0;
+    CopyFixedString(packageHeader.name, packageName);
     
     return WritePackage(outputPath, packageHeader, entries, assetData);
 }
@@ -260,11 +566,19 @@ bool AssetCompiler::GenerateTestAssets(const std::string& outputDir) {
     // Generate test assets
     std::vector<uint8_t> meshData = GenerateTestMesh();
     std::vector<uint8_t> textureData = GenerateTestTexture();
+    std::vector<uint8_t> normalData = GenerateDefaultNormalTexture();
+    std::vector<uint8_t> metallicRoughnessData = GenerateDefaultMetallicRoughnessTexture();
+    std::vector<uint8_t> emissiveData = GenerateDefaultEmissiveTexture();
+    std::vector<uint8_t> occlusionData = GenerateDefaultOcclusionTexture();
     std::vector<uint8_t> materialData = GenerateTestMaterial();
     
     // Write individual asset files
     std::string meshPath = outputDir + "/test_cube.mesh";
     std::string texturePath = outputDir + "/test_checker.texture";
+    std::string normalPath = outputDir + "/default_normal.texture";
+    std::string metallicRoughnessPath = outputDir + "/default_metallic_roughness.texture";
+    std::string emissivePath = outputDir + "/default_emissive.texture";
+    std::string occlusionPath = outputDir + "/default_occlusion.texture";
     std::string materialPath = outputDir + "/test_pbr.material";
     
     if (!WriteAssetFile(meshPath, meshData.data(), meshData.size())) {
@@ -276,6 +590,28 @@ bool AssetCompiler::GenerateTestAssets(const std::string& outputDir) {
         NEXT_LOG_ERROR("Failed to write texture asset");
         return false;
     }
+
+    if (!WriteAssetFile(normalPath, normalData.data(), normalData.size())) {
+        NEXT_LOG_ERROR("Failed to write default normal texture asset");
+        return false;
+    }
+
+    if (!WriteAssetFile(metallicRoughnessPath,
+                        metallicRoughnessData.data(),
+                        metallicRoughnessData.size())) {
+        NEXT_LOG_ERROR("Failed to write default metallic roughness texture asset");
+        return false;
+    }
+
+    if (!WriteAssetFile(emissivePath, emissiveData.data(), emissiveData.size())) {
+        NEXT_LOG_ERROR("Failed to write default emissive texture asset");
+        return false;
+    }
+
+    if (!WriteAssetFile(occlusionPath, occlusionData.data(), occlusionData.size())) {
+        NEXT_LOG_ERROR("Failed to write default occlusion texture asset");
+        return false;
+    }
     
     if (!WriteAssetFile(materialPath, materialData.data(), materialData.size())) {
         NEXT_LOG_ERROR("Failed to write material asset");
@@ -283,7 +619,14 @@ bool AssetCompiler::GenerateTestAssets(const std::string& outputDir) {
     }
     
     // Create a package containing all test assets
-    std::vector<std::string> assetFiles = {meshPath, texturePath, materialPath};
+    std::vector<std::string> assetFiles = {
+        meshPath,
+        texturePath,
+        normalPath,
+        metallicRoughnessPath,
+        emissivePath,
+        occlusionPath,
+        materialPath};
     std::string packagePath = outputDir + "/test_package.npkg";
     
     if (!CreatePackage("TestPackage", assetFiles, packagePath)) {
@@ -294,6 +637,10 @@ bool AssetCompiler::GenerateTestAssets(const std::string& outputDir) {
     NEXT_LOG_INFO("Test assets generated successfully");
     NEXT_LOG_INFO("  Mesh: %s", meshPath.c_str());
     NEXT_LOG_INFO("  Texture: %s", texturePath.c_str());
+    NEXT_LOG_INFO("  Normal: %s", normalPath.c_str());
+    NEXT_LOG_INFO("  MetallicRoughness: %s", metallicRoughnessPath.c_str());
+    NEXT_LOG_INFO("  Emissive: %s", emissivePath.c_str());
+    NEXT_LOG_INFO("  Occlusion: %s", occlusionPath.c_str());
     NEXT_LOG_INFO("  Material: %s", materialPath.c_str());
     NEXT_LOG_INFO("  Package: %s", packagePath.c_str());
     
@@ -310,7 +657,7 @@ bool AssetCompiler::WriteAssetFile(const std::string& path, const void* data, si
     file.write(reinterpret_cast<const char*>(data), size);
     file.close();
     
-    NEXT_LOG_DEBUG("Wrote asset file: %s (%llu bytes)", path.c_str(), size);
+    NEXT_LOG_DEBUG("Wrote asset file: %s (%zu bytes)", path.c_str(), size);
     return true;
 }
 
@@ -321,14 +668,27 @@ bool AssetCompiler::ReadAssetFile(const std::string& path, std::vector<uint8_t>&
         return false;
     }
     
-    size_t size = file.tellg();
-    file.seekg(0);
-    
-    data.resize(size);
-    file.read(reinterpret_cast<char*>(data.data()), size);
+    const std::streamsize size = file.tellg();
+    if (size < 0) {
+        NEXT_LOG_ERROR("Failed to determine asset file size: %s", path.c_str());
+        return false;
+    }
+
+    file.seekg(0, std::ios::beg);
+    if (!file) {
+        NEXT_LOG_ERROR("Failed to seek asset file for reading: %s", path.c_str());
+        return false;
+    }
+
+    data.resize(static_cast<size_t>(size));
+    if (size != 0 && !file.read(reinterpret_cast<char*>(data.data()), size)) {
+        NEXT_LOG_ERROR("Failed to read asset file payload: %s", path.c_str());
+        data.clear();
+        return false;
+    }
     file.close();
     
-    NEXT_LOG_DEBUG("Read asset file: %s (%llu bytes)", path.c_str(), size);
+    NEXT_LOG_DEBUG("Read asset file: %s (%zu bytes)", path.c_str(), size);
     return true;
 }
 
@@ -339,7 +699,7 @@ std::vector<uint8_t> AssetCompiler::GenerateTestMesh() {
     header.common.magic = AssetHeader::MAGIC;
     header.common.version = AssetHeader::CURRENT_VERSION;
     header.common.assetType = AssetType::Mesh;
-    strncpy(header.common.name, "TestCube", sizeof(header.common.name) - 1);
+    CopyFixedString(header.common.name, "TestCube");
     
     header.vertexCount = 8;
     header.indexCount = 36;
@@ -395,7 +755,7 @@ std::vector<uint8_t> AssetCompiler::GenerateTestMesh() {
     size_t totalSize = sizeof(MeshHeader) + vertexDataSize + indexDataSize + submeshDataSize;
     
     header.common.dataSize = static_cast<uint32_t>(totalSize - sizeof(MeshHeader));
-    header.common.checksum = 0; // Would calculate in real implementation
+    header.common.checksum = 0;
     
     // Build mesh data
     std::vector<uint8_t> meshData(totalSize);
@@ -411,8 +771,13 @@ std::vector<uint8_t> AssetCompiler::GenerateTestMesh() {
     ptr += indexDataSize;
     
     memcpy(ptr, submeshRange, submeshDataSize);
-    
-    NEXT_LOG_DEBUG("Generated test mesh: %s (%llu bytes)", header.common.name, meshData.size());
+
+    if (!StampAssetChecksum<MeshHeader>(meshData)) {
+        NEXT_LOG_ERROR("Generated test mesh checksum failed: %s", header.common.name);
+        return {};
+    }
+
+    NEXT_LOG_DEBUG("Generated test mesh: %s (%zu bytes)", header.common.name, meshData.size());
     return meshData;
 }
 
@@ -423,7 +788,7 @@ std::vector<uint8_t> AssetCompiler::GenerateTestTexture() {
     header.common.magic = AssetHeader::MAGIC;
     header.common.version = AssetHeader::CURRENT_VERSION;
     header.common.assetType = AssetType::Texture;
-    strncpy(header.common.name, "TestChecker", sizeof(header.common.name) - 1);
+    CopyFixedString(header.common.name, "TestChecker");
     
     header.width = 4;
     header.height = 4;
@@ -450,8 +815,173 @@ std::vector<uint8_t> AssetCompiler::GenerateTestTexture() {
     std::vector<uint8_t> textureData(totalSize);
     memcpy(textureData.data(), &header, sizeof(TextureHeader));
     memcpy(textureData.data() + sizeof(TextureHeader), pixelData, pixelDataSize);
-    
-    NEXT_LOG_DEBUG("Generated test texture: %s (%llu bytes)", header.common.name, textureData.size());
+
+    if (!StampAssetChecksum<TextureHeader>(textureData)) {
+        NEXT_LOG_ERROR("Generated test texture checksum failed: %s", header.common.name);
+        return {};
+    }
+
+    NEXT_LOG_DEBUG("Generated test texture: %s (%zu bytes)", header.common.name, textureData.size());
+    return textureData;
+}
+
+std::vector<uint8_t> AssetCompiler::GenerateDefaultNormalTexture() {
+    TextureHeader header;
+    memset(&header, 0, sizeof(TextureHeader));
+    header.common.magic = AssetHeader::MAGIC;
+    header.common.version = AssetHeader::CURRENT_VERSION;
+    header.common.assetType = AssetType::Texture;
+    CopyFixedString(header.common.name, "DefaultNormal");
+
+    header.width = 4;
+    header.height = 4;
+    header.depth = 1;
+    header.mipLevels = 1;
+    header.arraySize = 1;
+    header.format = 28; // DXGI_FORMAT_R8G8B8A8_UNORM
+    header.flags = 0;
+
+    uint32_t pixelData[16];
+    std::fill_n(pixelData, 16, 0xFFFF8080u);
+
+    size_t pixelDataSize = sizeof(pixelData);
+    size_t totalSize = sizeof(TextureHeader) + pixelDataSize;
+
+    header.common.dataSize = static_cast<uint32_t>(pixelDataSize);
+    header.common.checksum = 0;
+
+    std::vector<uint8_t> textureData(totalSize);
+    memcpy(textureData.data(), &header, sizeof(TextureHeader));
+    memcpy(textureData.data() + sizeof(TextureHeader), pixelData, pixelDataSize);
+
+    if (!StampAssetChecksum<TextureHeader>(textureData)) {
+        NEXT_LOG_ERROR("Generated default normal texture checksum failed: %s", header.common.name);
+        return {};
+    }
+
+    NEXT_LOG_DEBUG("Generated default normal texture: %s (%zu bytes)",
+                   header.common.name,
+                   textureData.size());
+    return textureData;
+}
+
+std::vector<uint8_t> AssetCompiler::GenerateDefaultMetallicRoughnessTexture() {
+    TextureHeader header;
+    memset(&header, 0, sizeof(TextureHeader));
+    header.common.magic = AssetHeader::MAGIC;
+    header.common.version = AssetHeader::CURRENT_VERSION;
+    header.common.assetType = AssetType::Texture;
+    CopyFixedString(header.common.name, "DefaultMetallicRoughness");
+
+    header.width = 4;
+    header.height = 4;
+    header.depth = 1;
+    header.mipLevels = 1;
+    header.arraySize = 1;
+    header.format = 28; // DXGI_FORMAT_R8G8B8A8_UNORM
+    header.flags = 0;
+
+    uint32_t pixelData[16];
+    std::fill_n(pixelData, 16, 0xFF804D00u);
+
+    size_t pixelDataSize = sizeof(pixelData);
+    size_t totalSize = sizeof(TextureHeader) + pixelDataSize;
+
+    header.common.dataSize = static_cast<uint32_t>(pixelDataSize);
+    header.common.checksum = 0;
+
+    std::vector<uint8_t> textureData(totalSize);
+    memcpy(textureData.data(), &header, sizeof(TextureHeader));
+    memcpy(textureData.data() + sizeof(TextureHeader), pixelData, pixelDataSize);
+
+    if (!StampAssetChecksum<TextureHeader>(textureData)) {
+        NEXT_LOG_ERROR("Generated default metallic roughness texture checksum failed: %s", header.common.name);
+        return {};
+    }
+
+    NEXT_LOG_DEBUG("Generated default metallic roughness texture: %s (%zu bytes)",
+                   header.common.name,
+                   textureData.size());
+    return textureData;
+}
+
+std::vector<uint8_t> AssetCompiler::GenerateDefaultEmissiveTexture() {
+    TextureHeader header;
+    memset(&header, 0, sizeof(TextureHeader));
+    header.common.magic = AssetHeader::MAGIC;
+    header.common.version = AssetHeader::CURRENT_VERSION;
+    header.common.assetType = AssetType::Texture;
+    CopyFixedString(header.common.name, "DefaultEmissive");
+
+    header.width = 4;
+    header.height = 4;
+    header.depth = 1;
+    header.mipLevels = 1;
+    header.arraySize = 1;
+    header.format = 28; // DXGI_FORMAT_R8G8B8A8_UNORM
+    header.flags = 0;
+
+    uint32_t pixelData[16];
+    std::fill_n(pixelData, 16, 0xFF000000u);
+
+    size_t pixelDataSize = sizeof(pixelData);
+    size_t totalSize = sizeof(TextureHeader) + pixelDataSize;
+
+    header.common.dataSize = static_cast<uint32_t>(pixelDataSize);
+    header.common.checksum = 0;
+
+    std::vector<uint8_t> textureData(totalSize);
+    memcpy(textureData.data(), &header, sizeof(TextureHeader));
+    memcpy(textureData.data() + sizeof(TextureHeader), pixelData, pixelDataSize);
+
+    if (!StampAssetChecksum<TextureHeader>(textureData)) {
+        NEXT_LOG_ERROR("Generated default emissive texture checksum failed: %s", header.common.name);
+        return {};
+    }
+
+    NEXT_LOG_DEBUG("Generated default emissive texture: %s (%zu bytes)",
+                   header.common.name,
+                   textureData.size());
+    return textureData;
+}
+
+std::vector<uint8_t> AssetCompiler::GenerateDefaultOcclusionTexture() {
+    TextureHeader header;
+    memset(&header, 0, sizeof(TextureHeader));
+    header.common.magic = AssetHeader::MAGIC;
+    header.common.version = AssetHeader::CURRENT_VERSION;
+    header.common.assetType = AssetType::Texture;
+    CopyFixedString(header.common.name, "DefaultOcclusion");
+
+    header.width = 4;
+    header.height = 4;
+    header.depth = 1;
+    header.mipLevels = 1;
+    header.arraySize = 1;
+    header.format = 28; // DXGI_FORMAT_R8G8B8A8_UNORM
+    header.flags = 0;
+
+    uint32_t pixelData[16];
+    std::fill_n(pixelData, 16, 0xFFFFFFFFu);
+
+    size_t pixelDataSize = sizeof(pixelData);
+    size_t totalSize = sizeof(TextureHeader) + pixelDataSize;
+
+    header.common.dataSize = static_cast<uint32_t>(pixelDataSize);
+    header.common.checksum = 0;
+
+    std::vector<uint8_t> textureData(totalSize);
+    memcpy(textureData.data(), &header, sizeof(TextureHeader));
+    memcpy(textureData.data() + sizeof(TextureHeader), pixelData, pixelDataSize);
+
+    if (!StampAssetChecksum<TextureHeader>(textureData)) {
+        NEXT_LOG_ERROR("Generated default occlusion texture checksum failed: %s", header.common.name);
+        return {};
+    }
+
+    NEXT_LOG_DEBUG("Generated default occlusion texture: %s (%zu bytes)",
+                   header.common.name,
+                   textureData.size());
     return textureData;
 }
 
@@ -462,44 +992,56 @@ std::vector<uint8_t> AssetCompiler::GenerateTestMaterial() {
     header.common.magic = AssetHeader::MAGIC;
     header.common.version = AssetHeader::CURRENT_VERSION;
     header.common.assetType = AssetType::Material;
-    strncpy(header.common.name, "TestPBR", sizeof(header.common.name) - 1);
+    CopyFixedString(header.common.name, "TestPBR");
     
-    header.textureCount = 2;
+    header.textureCount = 5;
     header.parameterCount = 4;
     header.shaderID = 1; // PBR shader
     header.flags = MaterialHeader::OPAQUE_FLAG;
     
     // Texture references
-    TextureRef textureRefs[2];
+    TextureRef textureRefs[5];
     memset(textureRefs, 0, sizeof(textureRefs));
-    strncpy(textureRefs[0].name, "TestChecker", sizeof(textureRefs[0].name) - 1);
+    CopyFixedString(textureRefs[0].name, "TestChecker");
     textureRefs[0].slot = 0;
     textureRefs[0].type = TextureRef::ALBEDO;
 
-    strncpy(textureRefs[1].name, "DefaultNormal", sizeof(textureRefs[1].name) - 1);
+    CopyFixedString(textureRefs[1].name, "DefaultNormal");
     textureRefs[1].slot = 1;
     textureRefs[1].type = TextureRef::NORMAL;
+
+    CopyFixedString(textureRefs[2].name, "DefaultMetallicRoughness");
+    textureRefs[2].slot = 2;
+    textureRefs[2].type = TextureRef::METALLIC_ROUGHNESS;
+
+    CopyFixedString(textureRefs[3].name, "DefaultEmissive");
+    textureRefs[3].slot = 3;
+    textureRefs[3].type = TextureRef::EMISSIVE;
+
+    CopyFixedString(textureRefs[4].name, "DefaultOcclusion");
+    textureRefs[4].slot = 4;
+    textureRefs[4].type = TextureRef::OCCLUSION;
     
     // Material parameters
     MaterialParam params[4];
     memset(params, 0, sizeof(params));
 
-    strncpy(params[0].name, "metallic", sizeof(params[0].name) - 1);
+    CopyFixedString(params[0].name, "metallic");
     params[0].type = MaterialParam::FLOAT;
     params[0].value[0] = 0.5f;
 
-    strncpy(params[1].name, "roughness", sizeof(params[1].name) - 1);
+    CopyFixedString(params[1].name, "roughness");
     params[1].type = MaterialParam::FLOAT;
     params[1].value[0] = 0.3f;
 
-    strncpy(params[2].name, "baseColor", sizeof(params[2].name) - 1);
+    CopyFixedString(params[2].name, "baseColor");
     params[2].type = MaterialParam::COLOR;
     params[2].value[0] = 0.8f; // R
     params[2].value[1] = 0.8f; // G
     params[2].value[2] = 0.8f; // B
     params[2].value[3] = 1.0f; // A
 
-    strncpy(params[3].name, "emissive", sizeof(params[3].name) - 1);
+    CopyFixedString(params[3].name, "emissive");
     params[3].type = MaterialParam::COLOR;
     params[3].value[0] = 0.0f;
     params[3].value[1] = 0.0f;
@@ -525,8 +1067,13 @@ std::vector<uint8_t> AssetCompiler::GenerateTestMaterial() {
     ptr += textureRefsSize;
     
     memcpy(ptr, params, paramsSize);
-    
-    NEXT_LOG_DEBUG("Generated test material: %s (%llu bytes)", header.common.name, materialData.size());
+
+    if (!StampAssetChecksum<MaterialHeader>(materialData)) {
+        NEXT_LOG_ERROR("Generated test material checksum failed: %s", header.common.name);
+        return {};
+    }
+
+    NEXT_LOG_DEBUG("Generated test material: %s (%zu bytes)", header.common.name, materialData.size());
     return materialData;
 }
 
@@ -539,24 +1086,23 @@ bool AssetCompiler::WritePackage(const std::string& path,
         NEXT_LOG_ERROR("Failed to open package file: %s", path.c_str());
         return false;
     }
-    
-    // Write package header
-    file.write(reinterpret_cast<const char*>(&header), sizeof(PackageHeader));
-    
-    // Write asset index
-    file.write(reinterpret_cast<const char*>(entries.data()), 
-               sizeof(AssetEntry) * entries.size());
-    
-    // Write asset data
-    for (const auto& data : assetData) {
-        file.write(reinterpret_cast<const char*>(data.data()), data.size());
+
+    std::vector<uint8_t> payload = BuildPackagePayload(entries, assetData);
+    PackageHeader packageHeader = header;
+    packageHeader.checksum = CalculateCRC64(payload.data(), payload.size());
+
+    file.write(reinterpret_cast<const char*>(&packageHeader), sizeof(PackageHeader));
+    if (!payload.empty()) {
+        file.write(reinterpret_cast<const char*>(payload.data()),
+                   static_cast<std::streamsize>(payload.size()));
     }
     
     file.close();
     
-    NEXT_LOG_INFO("Package written: %s (%llu assets, %llu total bytes)", 
-                 path.c_str(), entries.size(), 
-                 sizeof(PackageHeader) + sizeof(AssetEntry) * entries.size());
+    NEXT_LOG_INFO("Package written: %s (%zu assets, %zu total bytes)",
+                 path.c_str(),
+                 entries.size(),
+                 sizeof(PackageHeader) + payload.size());
     
     for (const auto& entry : entries) {
         NEXT_LOG_DEBUG("  Asset: %s (%s, %u bytes)", 

@@ -162,10 +162,22 @@ public:
 
     // Statistics
     struct Statistics {
-        uint32_t activeInterestPoints;
-        uint32_t highInterestCells;
-        uint32_t mediumInterestCells;
-        uint32_t lowInterestCells;
+        uint32_t activeInterestPoints = 0;
+        uint32_t highInterestCells = 0;
+        uint32_t mediumInterestCells = 0;
+        uint32_t lowInterestCells = 0;
+
+        uint64_t InterestCellCount() const {
+            return static_cast<uint64_t>(highInterestCells) +
+                   static_cast<uint64_t>(mediumInterestCells) +
+                   static_cast<uint64_t>(lowInterestCells);
+        }
+
+        bool HasActiveInterestPoints() const { return activeInterestPoints != 0; }
+        bool HasHighInterestCells() const { return highInterestCells != 0; }
+        bool HasMediumInterestCells() const { return mediumInterestCells != 0; }
+        bool HasLowInterestCells() const { return lowInterestCells != 0; }
+        bool HasInterestCells() const { return InterestCellCount() != 0; }
     };
 
     Statistics GetStatistics() const;
@@ -191,6 +203,7 @@ private:
 
     // Interest region generation
     void UpdateInterestRegions();
+    void UpdateStatistics();
     std::vector<CellCoord> GetCellsInRegion(const Vec3& center, float radius) const;
 
     // Interest point management

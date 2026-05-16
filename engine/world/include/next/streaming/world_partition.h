@@ -1,6 +1,7 @@
 #pragma once
 
 #include "next/renderer/math/math.h"
+#include <cstddef>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -103,6 +104,39 @@ struct CellMetadata {
         , layerMask(0)
         , lodLevels(0)
     {}
+
+    static constexpr uint32_t LayerBit(CellLayer layer) {
+        const uint32_t layerIndex = static_cast<uint32_t>(layer);
+        return layerIndex < static_cast<uint32_t>(CellLayer::Max) ? (1u << layerIndex) : 0u;
+    }
+
+    bool HasDiskData() const { return dataSize != 0; }
+    bool HasMemoryData() const { return memorySize != 0; }
+    bool HasGeometryStats() const { return triangleCount != 0 || entityCount != 0; }
+    bool HasLodLevels() const { return lodLevels != 0; }
+    bool HasAnyLayer() const { return layerMask != 0; }
+    bool HasLayer(CellLayer layer) const { return (layerMask & LayerBit(layer)) != 0; }
+    void SetLayerPresent(CellLayer layer, bool present = true) {
+        const uint32_t bit = LayerBit(layer);
+        if (present) {
+            layerMask |= bit;
+        } else {
+            layerMask &= ~bit;
+        }
+    }
+    size_t LayerCount() const {
+        size_t count = 0;
+        for (uint32_t bits = layerMask; bits != 0; bits &= bits - 1) {
+            ++count;
+        }
+        return count;
+    }
+    float MemoryToDiskRatio() const {
+        return dataSize == 0 ? 0.0f : static_cast<float>(memorySize) / static_cast<float>(dataSize);
+    }
+    float ClampedCellSize(float minimumSize = 1.0f) const {
+        return cellSize < minimumSize ? minimumSize : cellSize;
+    }
 };
 
 // ===== Cell Data =====
@@ -121,6 +155,17 @@ struct CellData {
         uint64_t gpuResourceHandle; // Handle to GPU resource (if applicable)
 
         LayerData() : data(nullptr), size(0), state(CellLoadState::Unloaded), gpuResourceHandle(0) {}
+
+        bool IsLoaded() const { return state == CellLoadState::Loaded; }
+        bool IsPending() const {
+            return state == CellLoadState::Queued ||
+                   state == CellLoadState::Loading ||
+                   state == CellLoadState::Decompressing ||
+                   state == CellLoadState::Uploading;
+        }
+        bool HasData() const { return data != nullptr; }
+        bool HasSize() const { return size != 0; }
+        bool HasGpuResource() const { return gpuResourceHandle != 0; }
     };
 
     std::unordered_map<CellLayer, LayerData> layers;
@@ -151,9 +196,40 @@ struct CellData {
         return it != layers.end() && it->second.state == CellLoadState::Loaded;
     }
 
+    bool IsLoaded() const { return state == CellLoadState::Loaded; }
+    bool IsPending() const {
+        return state == CellLoadState::Queued ||
+               state == CellLoadState::Loading ||
+               state == CellLoadState::Decompressing ||
+               state == CellLoadState::Uploading;
+    }
+    bool IsUnloading() const { return state == CellLoadState::Unloading; }
+    bool IsError() const { return state == CellLoadState::Error; }
+    bool IsPlaceholder() const { return isPlaceholderData; }
+    bool HasLayers() const { return !layers.empty(); }
+    bool HasDependencies() const { return !dependencies.empty(); }
+    bool HasPriority() const { return priority != 0.0f; }
+    bool HasAsyncOperation() const { return asyncOperationHandle != 0; }
+    bool HasMemoryData() const { return metadata.HasMemoryData(); }
+    bool HasDiskData() const { return metadata.HasDiskData(); }
+    uint64_t MemorySize() const { return metadata.memorySize; }
+    uint64_t DiskDataSize() const { return metadata.dataSize; }
+    size_t LayerCount() const { return layers.size(); }
+    size_t LoadedLayerCount() const {
+        size_t count = 0;
+        for (const auto& [layer, layerData] : layers) {
+            (void)layer;
+            if (layerData.IsLoaded()) {
+                ++count;
+            }
+        }
+        return count;
+    }
+    bool HasLoadedLayers() const { return LoadedLayerCount() != 0; }
+
     bool IsFullyLoaded() const {
         for (const auto& [layer, layerData] : layers) {
-            if (layerData.state != CellLoadState::Loaded) {
+            if (!layerData.IsLoaded()) {
                 return false;
             }
         }
@@ -293,13 +369,26 @@ public:
 
     // Statistics
     struct Statistics {
-        size_t loadedCells;
-        size_t queuedCells;
-        size_t loadingCells;
-        size_t totalCells;
-        size_t memoryUsageMB;
-        float averageLoadTime;
-        float averageUnloadTime;
+        size_t loadedCells = 0;
+        size_t queuedCells = 0;
+        size_t loadingCells = 0;
+        size_t totalCells = 0;
+        size_t memoryUsageMB = 0;
+        float averageLoadTime = 0.0f;
+        float averageUnloadTime = 0.0f;
+
+        size_t PendingCellCount() const { return queuedCells + loadingCells; }
+        size_t ActiveCellCount() const { return loadedCells + PendingCellCount(); }
+        bool HasLoadedCells() const { return loadedCells != 0; }
+        bool HasQueuedCells() const { return queuedCells != 0; }
+        bool HasLoadingCells() const { return loadingCells != 0; }
+        bool HasPendingCells() const { return PendingCellCount() != 0; }
+        bool HasActiveCells() const { return ActiveCellCount() != 0; }
+        bool HasTrackedCells() const { return totalCells != 0; }
+        bool HasMemoryUsage() const { return memoryUsageMB != 0; }
+        bool HasAverageLoadTime() const { return averageLoadTime != 0.0f; }
+        bool HasAverageUnloadTime() const { return averageUnloadTime != 0.0f; }
+        bool HasTiming() const { return HasAverageLoadTime() || HasAverageUnloadTime(); }
     };
 
     Statistics GetStatistics() const;

@@ -2,7 +2,7 @@
 #include "next/runtime/world.h"
 #include "next/runtime/entity.h"
 #include "next/runtime/event_bus.h"
-#include "next/log/log.h"
+#include "next/foundation/logger.h"
 
 #include <algorithm>
 #include <chrono>
@@ -22,6 +22,30 @@ extern "C" {
 namespace Next {
 
 namespace {
+
+class ScriptLogStream {
+public:
+    explicit ScriptLogStream(LogLevel level)
+        : level_(level) {}
+
+    ~ScriptLogStream() {
+        Logger::Log(level_, "%s", stream_.str().c_str());
+    }
+
+    template <typename T>
+    ScriptLogStream& operator<<(const T& value) {
+        stream_ << value;
+        return *this;
+    }
+
+private:
+    LogLevel level_;
+    std::ostringstream stream_;
+};
+
+#define SCRIPT_LOG_INFO() ScriptLogStream(::Next::LogLevel::Info)
+#define SCRIPT_LOG_WARN() ScriptLogStream(::Next::LogLevel::Warning)
+#define SCRIPT_LOG_ERROR() ScriptLogStream(::Next::LogLevel::Error)
 
 #ifdef NEXT_WITH_LUA
 
@@ -60,17 +84,17 @@ std::string BuildLuaLogMessage(lua_State* L) {
 }
 
 int LuaLogInfo(lua_State* L) {
-    NEXT_LOG_INFO() << BuildLuaLogMessage(L);
+    SCRIPT_LOG_INFO() << BuildLuaLogMessage(L);
     return 0;
 }
 
 int LuaLogWarn(lua_State* L) {
-    NEXT_LOG_WARN() << BuildLuaLogMessage(L);
+    SCRIPT_LOG_WARN() << BuildLuaLogMessage(L);
     return 0;
 }
 
 int LuaLogError(lua_State* L) {
-    NEXT_LOG_ERROR() << BuildLuaLogMessage(L);
+    SCRIPT_LOG_ERROR() << BuildLuaLogMessage(L);
     return 0;
 }
 
@@ -129,14 +153,14 @@ LuaVM::~LuaVM() {
 
 bool LuaVM::Initialize() {
     if (L_) {
-        NEXT_LOG_WARN() << "LuaVM::Initialize: VM already initialized";
+        SCRIPT_LOG_WARN() << "LuaVM::Initialize: VM already initialized";
         return true;
     }
 
 #ifdef NEXT_WITH_LUA
     lua_State* state = luaL_newstate();
     if (!state) {
-        NEXT_LOG_ERROR() << "LuaVM::Initialize: Failed to create Lua state";
+        SCRIPT_LOG_ERROR() << "LuaVM::Initialize: Failed to create Lua state";
         return false;
     }
 
@@ -145,11 +169,11 @@ bool LuaVM::Initialize() {
     LuaBindings::Initialize(L_);
     UpdateSharedBindings();
 
-    NEXT_LOG_INFO() << "LuaVM::Initialize: Lua VM initialized (system Lua)";
+    SCRIPT_LOG_INFO() << "LuaVM::Initialize: Lua VM initialized (system Lua)";
     return true;
 #else
-    NEXT_LOG_INFO() << "LuaVM::Initialize: Lua VM initialized (stub mode)";
-    NEXT_LOG_INFO() << "  To enable full Lua support, set USE_SYSTEM_LUA=ON in CMake";
+    SCRIPT_LOG_INFO() << "LuaVM::Initialize: Lua VM initialized (stub mode)";
+    SCRIPT_LOG_INFO() << "  To enable full Lua support, set USE_SYSTEM_LUA=ON in CMake";
     return true;
 #endif
 }
@@ -171,7 +195,7 @@ void LuaVM::Shutdown() {
     currentDeltaTime_ = 0.0f;
     std::memset(&stats_, 0, sizeof(stats_));
 
-    NEXT_LOG_INFO() << "LuaVM::Shutdown: Lua VM shut down";
+    SCRIPT_LOG_INFO() << "LuaVM::Shutdown: Lua VM shut down";
 }
 
 LuaVM::ScriptID LuaVM::LoadScript(
@@ -179,7 +203,7 @@ LuaVM::ScriptID LuaVM::LoadScript(
     const std::unordered_map<std::string, std::string>* parameters) {
     std::ifstream file(scriptPath);
     if (!file.is_open()) {
-        NEXT_LOG_ERROR() << "LuaVM::LoadScript: Failed to open script: " << scriptPath;
+        SCRIPT_LOG_ERROR() << "LuaVM::LoadScript: Failed to open script: " << scriptPath;
         return 0;
     }
 
@@ -203,7 +227,7 @@ LuaVM::ScriptID LuaVM::LoadScriptFromString(
         info.parameters = *parameters;
     }
     if (!PrepareScriptEnvironment(info)) {
-        NEXT_LOG_ERROR() << "LuaVM::LoadScriptFromString: Failed to prepare script '" << scriptName << "'";
+        SCRIPT_LOG_ERROR() << "LuaVM::LoadScriptFromString: Failed to prepare script '" << scriptName << "'";
         return 0;
     }
     info.isValid = true;
@@ -212,7 +236,7 @@ LuaVM::ScriptID LuaVM::LoadScriptFromString(
     auto endTime = std::chrono::high_resolution_clock::now();
     const double loadTimeMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
 
-    NEXT_LOG_INFO() << "LuaVM::LoadScriptFromString: Loaded script '" << scriptName
+    SCRIPT_LOG_INFO() << "LuaVM::LoadScriptFromString: Loaded script '" << scriptName
                     << "' (ID: " << info.id << ", Time: " << loadTimeMs << " ms)";
 
     stats_.scriptCount = scripts_.size();
@@ -235,7 +259,7 @@ void LuaVM::UnloadScript(ScriptID scriptID) {
     stats_.scriptCount = scripts_.size();
     stats_.activeScripts = static_cast<uint32_t>(scripts_.size());
 
-    NEXT_LOG_INFO() << "LuaVM::UnloadScript: Unloaded script ID " << scriptID;
+    SCRIPT_LOG_INFO() << "LuaVM::UnloadScript: Unloaded script ID " << scriptID;
 }
 
 bool LuaVM::ReloadScript(ScriptID scriptID) {
@@ -256,7 +280,7 @@ bool LuaVM::ReloadScript(ScriptID scriptID) {
 
     ReleaseScriptEnvironment(reloaded);
     if (!PrepareScriptEnvironment(reloaded)) {
-        NEXT_LOG_ERROR() << "LuaVM::ReloadScript: Failed to reload script '" << reloaded.name << "'";
+        SCRIPT_LOG_ERROR() << "LuaVM::ReloadScript: Failed to reload script '" << reloaded.name << "'";
         return false;
     }
 
@@ -265,7 +289,7 @@ bool LuaVM::ReloadScript(ScriptID scriptID) {
     reloaded.isValid = true;
     it->second = std::move(reloaded);
 
-    NEXT_LOG_INFO() << "LuaVM::ReloadScript: Reloaded script '" << it->second.name << "'";
+    SCRIPT_LOG_INFO() << "LuaVM::ReloadScript: Reloaded script '" << it->second.name << "'";
     return true;
 }
 
@@ -302,7 +326,7 @@ bool LuaVM::CallScriptFunction(ScriptID scriptID, const std::string& functionNam
             it->second.lastError = "callback '" + functionName + "' is not a function";
             it->second.hasRuntimeError = true;
             lua_settop(state, stackTop);
-            NEXT_LOG_ERROR() << "LuaVM::CallScriptFunction: " << it->second.lastError
+            SCRIPT_LOG_ERROR() << "LuaVM::CallScriptFunction: " << it->second.lastError
                              << " for script '" << it->second.name << "'";
             return false;
         }
@@ -313,7 +337,7 @@ bool LuaVM::CallScriptFunction(ScriptID scriptID, const std::string& functionNam
             it->second.hasRuntimeError = true;
             it->second.isValid = false;
             lua_settop(state, stackTop);
-            NEXT_LOG_ERROR() << "LuaVM::CallScriptFunction: Script '" << it->second.name
+            SCRIPT_LOG_ERROR() << "LuaVM::CallScriptFunction: Script '" << it->second.name
                              << "' callback '" << functionName << "' failed: " << it->second.lastError;
             return false;
         }
@@ -333,21 +357,21 @@ bool LuaVM::CallScriptFunction(ScriptID scriptID, const std::string& functionNam
 
 void LuaVM::RegisterCFunction(const std::string& luaName, void* function) {
     (void)function;
-    NEXT_LOG_WARN() << "LuaVM::RegisterCFunction: Direct void* binding is not implemented for '" << luaName << "'";
+    SCRIPT_LOG_WARN() << "LuaVM::RegisterCFunction: Direct void* binding is not implemented for '" << luaName << "'";
 }
 
 bool LuaVM::ExecuteString(const std::string& code) {
 #ifdef NEXT_WITH_LUA
     if (lua_State* state = AsLuaState(L_)) {
         if (luaL_dostring(state, code.c_str()) != LUA_OK) {
-            NEXT_LOG_ERROR() << "LuaVM::ExecuteString: " << PopLuaError(state);
+            SCRIPT_LOG_ERROR() << "LuaVM::ExecuteString: " << PopLuaError(state);
             return false;
         }
         return true;
     }
 #endif
 
-    NEXT_LOG_INFO() << "LuaVM::ExecuteString: Executing code snippet (" << code.length()
+    SCRIPT_LOG_INFO() << "LuaVM::ExecuteString: Executing code snippet (" << code.length()
                     << " chars, stub mode)";
     return true;
 }
@@ -356,7 +380,7 @@ bool LuaVM::ExecuteFile(const std::string& filePath) {
 #ifdef NEXT_WITH_LUA
     if (lua_State* state = AsLuaState(L_)) {
         if (luaL_dofile(state, filePath.c_str()) != LUA_OK) {
-            NEXT_LOG_ERROR() << "LuaVM::ExecuteFile: " << PopLuaError(state);
+            SCRIPT_LOG_ERROR() << "LuaVM::ExecuteFile: " << PopLuaError(state);
             return false;
         }
         return true;
@@ -397,7 +421,7 @@ bool LuaVM::PrepareScriptEnvironment(ScriptInfo& script) {
 
         if (luaL_loadbuffer(state, script.content.data(), script.content.size(), script.name.c_str()) != LUA_OK) {
             script.lastError = PopLuaError(state);
-            NEXT_LOG_ERROR() << "LuaVM::PrepareScriptEnvironment: Failed to compile script '"
+            SCRIPT_LOG_ERROR() << "LuaVM::PrepareScriptEnvironment: Failed to compile script '"
                              << script.name << "': " << script.lastError;
             lua_settop(state, stackTop);
             return false;
@@ -421,7 +445,7 @@ bool LuaVM::PrepareScriptEnvironment(ScriptInfo& script) {
         if (!AssignEnvironmentToChunk(state, chunkIndex, envIndex)) {
             script.lastError = "failed to bind script environment";
             lua_settop(state, stackTop);
-            NEXT_LOG_ERROR() << "LuaVM::PrepareScriptEnvironment: " << script.lastError
+            SCRIPT_LOG_ERROR() << "LuaVM::PrepareScriptEnvironment: " << script.lastError
                              << " for '" << script.name << "'";
             return false;
         }
@@ -429,7 +453,7 @@ bool LuaVM::PrepareScriptEnvironment(ScriptInfo& script) {
         if (lua_pcall(state, 0, 0, 0) != LUA_OK) {
             script.lastError = PopLuaError(state);
             lua_settop(state, stackTop);
-            NEXT_LOG_ERROR() << "LuaVM::PrepareScriptEnvironment: Script '" << script.name
+            SCRIPT_LOG_ERROR() << "LuaVM::PrepareScriptEnvironment: Script '" << script.name
                              << "' failed during load: " << script.lastError;
             return false;
         }
@@ -476,24 +500,24 @@ void LuaBindings::RegisterAllBindings(void* L) {
     RegisterMathAPI(L);
     RegisterLogAPI(L);
     RegisterTimeAPI(L);
-    NEXT_LOG_INFO() << "LuaBindings::RegisterAllBindings: Registered Log/Time/Math APIs";
+    SCRIPT_LOG_INFO() << "LuaBindings::RegisterAllBindings: Registered Log/Time/Math APIs";
 }
 
 void LuaBindings::RegisterWorldAPI(void* L, World* world) {
     (void)L;
     (void)world;
-    NEXT_LOG_INFO() << "LuaBindings::RegisterWorldAPI: World binding surface reserved";
+    SCRIPT_LOG_INFO() << "LuaBindings::RegisterWorldAPI: World binding surface reserved";
 }
 
 void LuaBindings::RegisterEntityAPI(void* L) {
     (void)L;
-    NEXT_LOG_INFO() << "LuaBindings::RegisterEntityAPI: Entity binding surface reserved";
+    SCRIPT_LOG_INFO() << "LuaBindings::RegisterEntityAPI: Entity binding surface reserved";
 }
 
 void LuaBindings::RegisterEventAPI(void* L, EventBus* eventBus) {
     (void)L;
     (void)eventBus;
-    NEXT_LOG_INFO() << "LuaBindings::RegisterEventAPI: Event binding surface reserved";
+    SCRIPT_LOG_INFO() << "LuaBindings::RegisterEventAPI: Event binding surface reserved";
 }
 
 void LuaBindings::RegisterMathAPI(void* L) {
@@ -592,7 +616,7 @@ ScriptSystem::~ScriptSystem() {
 
 void ScriptSystem::Initialize() {
     if (!world_ || !vm_) {
-        NEXT_LOG_ERROR() << "ScriptSystem::Initialize: World or Lua VM not set";
+        SCRIPT_LOG_ERROR() << "ScriptSystem::Initialize: World or Lua VM not set";
         return;
     }
 
@@ -604,7 +628,7 @@ void ScriptSystem::Initialize() {
         }
     }
 
-    NEXT_LOG_INFO() << "ScriptSystem::Initialize: Script system initialized";
+    SCRIPT_LOG_INFO() << "ScriptSystem::Initialize: Script system initialized";
 }
 
 void ScriptSystem::Update(float deltaTime) {
@@ -657,7 +681,7 @@ ScriptComponent* ScriptSystem::AddScriptComponent(Entity entity, const std::stri
     // 检查是否已存在
     auto entityIt = entityScripts_.find(entityID);
     if (entityIt != entityScripts_.end() && entityIt->second.find(scriptPath) != entityIt->second.end()) {
-        NEXT_LOG_WARN() << "ScriptSystem::AddScriptComponent: Script '" << scriptPath
+        SCRIPT_LOG_WARN() << "ScriptSystem::AddScriptComponent: Script '" << scriptPath
                         << "' already exists on entity";
         return &entityIt->second[scriptPath];
     }
@@ -669,7 +693,7 @@ ScriptComponent* ScriptSystem::AddScriptComponent(Entity entity, const std::stri
     component.isEnabled = component.config.enabled;
 
     if (!LoadScript(&component)) {
-        NEXT_LOG_ERROR() << "ScriptSystem::AddScriptComponent: Failed to load script '" << scriptPath << "'";
+        SCRIPT_LOG_ERROR() << "ScriptSystem::AddScriptComponent: Failed to load script '" << scriptPath << "'";
         return nullptr;
     }
 
@@ -678,7 +702,7 @@ ScriptComponent* ScriptSystem::AddScriptComponent(Entity entity, const std::stri
 
     allScripts_.push_back({entityID, componentPtr});
 
-    NEXT_LOG_INFO() << "ScriptSystem::AddScriptComponent: Added script '" << scriptPath
+    SCRIPT_LOG_INFO() << "ScriptSystem::AddScriptComponent: Added script '" << scriptPath
                     << "' to entity " << entityID;
 
     return componentPtr;
@@ -713,7 +737,7 @@ void ScriptSystem::RemoveScriptComponent(Entity entity, const std::string& scrip
         entityScripts_.erase(entityIt);
     }
 
-    NEXT_LOG_INFO() << "ScriptSystem::RemoveScriptComponent: Removed script '" << scriptPath
+    SCRIPT_LOG_INFO() << "ScriptSystem::RemoveScriptComponent: Removed script '" << scriptPath
                     << "' from entity " << entityID;
 }
 
@@ -816,7 +840,7 @@ bool ScriptSystem::CallScriptCallback(ScriptComponent* script, const std::string
         script->isEnabled = false;
     }
 
-    NEXT_LOG_ERROR() << "ScriptSystem::CallScriptCallback: Disabled script '" << script->scriptPath
+    SCRIPT_LOG_ERROR() << "ScriptSystem::CallScriptCallback: Disabled script '" << script->scriptPath
                      << "' after callback '" << callbackName << "' failed";
     return false;
 }
@@ -903,3 +927,7 @@ void ScriptSystemManager::DestroyAll() {
 }
 
 } // namespace Next
+
+#undef SCRIPT_LOG_INFO
+#undef SCRIPT_LOG_WARN
+#undef SCRIPT_LOG_ERROR

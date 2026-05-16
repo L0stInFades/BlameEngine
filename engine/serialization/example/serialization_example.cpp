@@ -1,7 +1,7 @@
 // 序列化系统使用示例
 
 #include "next/serialization/serialization.h"
-#include "next/log/log.h"
+#include "next/foundation/logger.h"
 #include <iostream>
 
 using namespace Next;
@@ -65,8 +65,20 @@ struct GameSave : public ISerializable {
     void Serialize(Serializer* serializer) const override {
         SerializationHelper::Serialize(serializer, "saveName", saveName);
         SerializationHelper::Serialize(serializer, "saveTime", saveTime);
-        SerializationHelper::Serialize(serializer, "players", players);
-        SerializationHelper::Serialize(serializer, "questStates", questStates);
+
+        serializer->BeginArray("players", players.size());
+        for (const auto& player : players) {
+            serializer->BeginObject("");
+            player.Serialize(serializer);
+            serializer->EndObject();
+        }
+        serializer->EndArray();
+
+        serializer->BeginObject("questStates");
+        for (const auto& [questId, state] : questStates) {
+            serializer->WriteInt32(questId, state);
+        }
+        serializer->EndObject();
     }
 
     void Deserialize(Deserializer* deserializer) override {
@@ -285,10 +297,8 @@ int main() {
     std::cout << "====================\n";
 
     // 初始化日志系统
-    auto& logger = Logger::GetInstance();
-    LogConfig config;
-    config.minLevel = LogLevel::Info;
-    logger.Initialize(config);
+    Logger::Initialize();
+    Logger::SetLevel(LogLevel::Info);
 
     // 运行所有示例
     ManualSerializationExample();
@@ -299,7 +309,7 @@ int main() {
     ErrorHandlingExample();
 
     // 关闭日志系统
-    logger.Shutdown();
+    Logger::Shutdown();
 
     std::cout << "\n所有示例运行完成！\n";
     std::cout << "生成的文件:\n";

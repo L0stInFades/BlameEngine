@@ -9,6 +9,13 @@ target_include_directories(next_terminal
 
 target_compile_features(next_terminal PUBLIC cxx_std_17)
 
+if(NOT MSVC)
+    target_compile_options(next_terminal PRIVATE
+        -Wformat=2
+        -Werror=format
+    )
+endif()
+
 if(WIN32)
     target_compile_definitions(next_terminal PRIVATE
         WIN32_LEAN_AND_MEAN

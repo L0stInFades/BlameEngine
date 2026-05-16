@@ -175,15 +175,46 @@ public:
     void SetConfig(const LODSystemConfig& config) { config_ = config; }
     const LODSystemConfig& GetConfig() const { return config_; }
 
+    // Cell size (in world units). Must be kept in sync with WorldPartitionConfig::cellSize
+    // so HLOD cluster centers land at the right place in world space.
+    void SetCellSize(float cellSize) { if (cellSize > 0.0f) cellSize_ = cellSize; }
+    float GetCellSize() const { return cellSize_; }
+
     // Statistics
     struct Statistics {
-        uint32_t highDetailObjects;     // LOD 0
-        uint32_t mediumDetailObjects;   // LOD 1-2
-        uint32_t lowDetailObjects;      // LOD 3+
-        uint32_t hlodObjects;
-        uint32_t impostorObjects;
-        float averageLODLevel;
-        float currentQualityScale;
+        uint32_t highDetailObjects = 0;     // LOD 0
+        uint32_t mediumDetailObjects = 0;   // LOD 1-2
+        uint32_t lowDetailObjects = 0;      // LOD 3+
+        uint32_t hlodObjects = 0;
+        uint32_t impostorObjects = 0;
+        float averageLODLevel = 0.0f;
+        float currentQualityScale = 0.0f;
+
+        uint64_t DetailedObjectCount() const {
+            return static_cast<uint64_t>(highDetailObjects) +
+                   static_cast<uint64_t>(mediumDetailObjects) +
+                   static_cast<uint64_t>(lowDetailObjects);
+        }
+
+        uint64_t RepresentationObjectCount() const {
+            return static_cast<uint64_t>(hlodObjects) +
+                   static_cast<uint64_t>(impostorObjects);
+        }
+
+        uint64_t TotalObjectCount() const {
+            return DetailedObjectCount() + RepresentationObjectCount();
+        }
+
+        bool HasHighDetailObjects() const { return highDetailObjects != 0; }
+        bool HasMediumDetailObjects() const { return mediumDetailObjects != 0; }
+        bool HasLowDetailObjects() const { return lowDetailObjects != 0; }
+        bool HasDetailedObjects() const { return DetailedObjectCount() != 0; }
+        bool HasHLODObjects() const { return hlodObjects != 0; }
+        bool HasImpostorObjects() const { return impostorObjects != 0; }
+        bool HasRepresentationObjects() const { return RepresentationObjectCount() != 0; }
+        bool HasObjects() const { return TotalObjectCount() != 0; }
+        bool HasAverageLODLevel() const { return averageLODLevel != 0.0f; }
+        bool HasQualityScale() const { return currentQualityScale != 0.0f; }
     };
 
     Statistics GetStatistics() const;
@@ -225,6 +256,19 @@ private:
 
     // Cell to HLOD mapping
     std::unordered_map<CellCoord, uint64_t, CellCoord::Hash> cellToHLOD_;
+
+    // Cached state from Update(): used by screen-size and dither calculations.
+    Vec3 cameraPosition_{0.0f, 0.0f, 0.0f};
+    Mat4 viewProjection_{};
+
+    // Cell sizing — see SetCellSize/GetCellSize.
+    float cellSize_ = 64.0f;
+
+    // Monotonic ID/handle generators for HLOD clusters and placeholder GPU
+    // resource handles created on the framework side. The renderer asset
+    // pipeline is expected to materialize the actual GPU resources later.
+    uint64_t nextHLODClusterId_ = 1;
+    uint64_t nextResourceHandle_ = 1;
 
     // Quality control
     float qualityScale_;

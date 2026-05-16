@@ -3,6 +3,12 @@
 #include <cstdarg>
 #include <string>
 
+#if defined(__clang__) || defined(__GNUC__)
+#define NEXT_PRINTF_FORMAT(formatIndex, firstArg) __attribute__((format(printf, formatIndex, firstArg)))
+#else
+#define NEXT_PRINTF_FORMAT(formatIndex, firstArg)
+#endif
+
 namespace Next {
 
 /**
@@ -67,13 +73,15 @@ public:
      * @param format Printf-style format string
      * @param ... Variable arguments matching the format string
      */
-    static void Log(LogLevel level, const char* format, ...);
+    static void Log(LogLevel level, const char* format, ...) NEXT_PRINTF_FORMAT(2, 3);
 
 private:
-    static void LogV(LogLevel level, const char* format, va_list args);
+    static void LogV(LogLevel level, const char* format, va_list args) NEXT_PRINTF_FORMAT(2, 0);
 };
 
 } // namespace Next
+
+#undef NEXT_PRINTF_FORMAT
 
 #define NEXT_LOG_TRACE(fmt, ...) ::Next::Logger::Log(::Next::LogLevel::Trace, fmt, ##__VA_ARGS__)
 #define NEXT_LOG_DEBUG(fmt, ...) ::Next::Logger::Log(::Next::LogLevel::Debug, fmt, ##__VA_ARGS__)

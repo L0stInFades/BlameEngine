@@ -12,3 +12,10 @@ target_link_libraries(next_jobsystem
         next_foundation
         next_profiler
 )
+
+if(NOT MSVC)
+    target_compile_options(next_jobsystem PRIVATE
+        -Wformat=2
+        -Werror=format
+    )
+endif()

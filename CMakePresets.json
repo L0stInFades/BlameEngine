@@ -11,6 +11,7 @@
         "BUILD_TOOLS": "ON",
         "BUILD_EDITOR": "OFF",
         "BUILD_GAME": "OFF",
+        "BUILD_GAME_HACKOPS": "ON",
         "BUILD_TESTS": "OFF",
         "BUILD_TERMINAL": "ON"
       }
@@ -51,7 +52,9 @@
       "name": "terminal-dev",
       "configurePreset": "terminal-dev",
       "targets": [
-        "next_nvim_surface_probe"
+        "next_compression_probe",
+        "next_nvim_surface_probe",
+        "hackops_demo"
       ]
     },
     {

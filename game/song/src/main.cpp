@@ -20,13 +20,16 @@ int main(int argc, char* argv[]) {
             options.smokeFrames = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (arg == "--smoke-seconds" && i + 1 < argc) {
             options.smokeSeconds = std::atof(argv[++i]);
+        } else if (arg == "--renderer-pool-budget-mb" && i + 1 < argc) {
+            options.rendererResourcePoolBudgetMB = static_cast<uint64_t>(std::strtoull(argv[++i], nullptr, 10));
         } else if (arg == "--help" || arg == "-h") {
             std::fprintf(stdout,
                          "song_demo\n"
                          "  --run-self-tests           Run startup self-tests before entering the loop\n"
                          "  --allow-placeholder-cells  Allow world streaming to synthesize placeholder cells\n"
                          "  --smoke-frames <n>         Run for n frames then exit\n"
-                         "  --smoke-seconds <n>        Run for n seconds then exit\n");
+                         "  --smoke-seconds <n>        Run for n seconds then exit\n"
+                         "  --renderer-pool-budget-mb <n>  Apply a renderer resource pool budget per memory bucket\n");
             return 0;
         }
     }

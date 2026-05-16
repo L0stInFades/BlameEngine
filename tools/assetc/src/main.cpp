@@ -13,6 +13,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Usage:" << std::endl;
         std::cout << "  next_assetc test <output_dir>  - Generate test assets for CP3" << std::endl;
         std::cout << "  next_assetc compile <input> <output> - Compile single asset" << std::endl;
+        std::cout << "  next_assetc cell <input.bin> <output.ncell> [none|lz4|zstd] - Compile streaming cell" << std::endl;
         std::cout << "  next_assetc import <input.obj> <output.npkg> - Compile a model into a package (mesh only for now)" << std::endl;
         std::cout << "  next_assetc package <name> <output> <assets...> - Create package" << std::endl;
         return 1;
@@ -70,6 +71,24 @@ int main(int argc, char* argv[]) {
         
         NEXT_LOG_INFO("Asset compiled successfully: %s -> %s", inputPath.c_str(), outputPath.c_str());
 
+    } else if (command == "cell") {
+        if (argc < 4) {
+            std::cout << "Error: Input payload and output .ncell paths required for cell command" << std::endl;
+            return 1;
+        }
+
+        const std::string inputPath = argv[2];
+        const std::string outputPath = argv[3];
+        const std::string compression = argc >= 5 ? argv[4] : "none";
+
+        if (!compiler.CompileCell(inputPath, outputPath, compression)) {
+            NEXT_LOG_ERROR("Failed to compile streaming cell: %s", inputPath.c_str());
+            return 1;
+        }
+
+        NEXT_LOG_INFO("Streaming cell compiled successfully: %s -> %s",
+                      inputPath.c_str(), outputPath.c_str());
+
     } else if (command == "import") {
         if (argc < 4) {
             std::cout << "Error: Input OBJ and output package paths required for import command" << std::endl;
@@ -122,7 +141,7 @@ int main(int argc, char* argv[]) {
             assetFiles.push_back(argv[i]);
         }
         
-        NEXT_LOG_INFO("Creating package: %s with %llu assets", packageName.c_str(), assetFiles.size());
+        NEXT_LOG_INFO("Creating package: %s with %zu assets", packageName.c_str(), assetFiles.size());
         
         if (!compiler.CreatePackage(packageName, assetFiles, outputPath)) {
             NEXT_LOG_ERROR("Failed to create package");

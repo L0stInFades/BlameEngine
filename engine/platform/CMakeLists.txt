@@ -1,6 +1,4 @@
 add_library(next_platform STATIC
-    src/window.cpp
-    src/input.cpp
     src/platform.cpp
 )
 
@@ -24,6 +22,7 @@ endif()
 
 if(APPLE)
     target_sources(next_platform PRIVATE
+        src/input.cpp
         src/apple/window_cocoa.mm
     )
     set_source_files_properties(src/apple/window_cocoa.mm PROPERTIES
@@ -32,5 +31,19 @@ if(APPLE)
     target_link_libraries(next_platform PUBLIC
         "-framework Cocoa"
         "-framework QuartzCore"
+    )
+endif()
+
+if(NOT WIN32 AND NOT APPLE)
+    target_sources(next_platform PRIVATE
+        src/window.cpp
+        src/input.cpp
+    )
+endif()
+
+if(NOT MSVC)
+    target_compile_options(next_platform PRIVATE
+        -Wformat=2
+        -Werror=format
     )
 endif()

@@ -10,3 +10,10 @@ target_include_directories(next_game
 )
 
 target_link_libraries(next_game PUBLIC next_renderer next_runtime next_foundation)
+
+if(NOT MSVC)
+    target_compile_options(next_game PRIVATE
+        -Wformat=2
+        -Werror=format
+    )
+endif()

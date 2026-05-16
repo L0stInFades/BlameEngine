@@ -11,12 +11,13 @@ target_include_directories(song_demo
 )
 
 target_link_libraries(song_demo PRIVATE
-    next_platform
-    next_foundation
-    next_runtime
     next_renderer
-    next_profiler
-    next_jobsystem
-    next_asset
     next_world
 )
+
+if(NOT MSVC)
+    target_compile_options(song_demo PRIVATE
+        -Wformat=2
+        -Werror=format
+    )
+endif()

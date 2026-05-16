@@ -116,6 +116,12 @@ public:
     std::vector<PrefetchRequest> GeneratePrefetchRequests() const;
     void ClearPrefetchRequests();
 
+    // Returns the cached result of the most recent GeneratePrefetchRequests()
+    // call. Useful for consumers that want to inspect / dispatch the same
+    // request set multiple times per frame without re-running prediction.
+    // The cache is invalidated by ClearPrefetchRequests().
+    const std::vector<PrefetchRequest>& GetPendingRequests() const { return pendingRequests_; }
+
     // Camera history
     void AddCameraSample(const CameraSample& sample);
     const CameraSample* GetLatestSample() const;
@@ -133,6 +139,12 @@ public:
     // Configuration
     void SetConfig(const PredictionSystemConfig& config) { config_ = config; }
     const PredictionSystemConfig& GetConfig() const { return config_; }
+
+    // Cell size (in world units). Must be kept in sync with WorldPartitionConfig::cellSize
+    // for cell-grid math (PredictCellsAtPath, CalculateTimeToCell) to land in the
+    // same partition as the streaming manager.
+    void SetCellSize(float cellSize) { if (cellSize > 0.0f) cellSize_ = cellSize; }
+    float GetCellSize() const { return cellSize_; }
 
     // Statistics
     struct Statistics {
@@ -185,6 +197,9 @@ private:
     float CalculatePredictionConfidence(const Vec3& predictedPosition) const;
     bool IsPredictionReliable(float confidence) const;
 
+    // Velocity stability for confidence weighting
+    float ComputeVelocityStability() const;
+
     // Configuration
     PredictionSystemConfig config_;
 
@@ -199,6 +214,12 @@ private:
     Vec3 smoothedVelocity_;
     Vec3 currentAcceleration_;
     float elapsedTime_;  // Elapsed time for tracking
+
+    // Cell sizing (must match WorldPartitionConfig::cellSize)
+    float cellSize_ = 64.0f;
+
+    // Cached prefetch requests from the most recent generation pass
+    mutable std::vector<PrefetchRequest> pendingRequests_;
 
     // Statistics
     Statistics stats_;

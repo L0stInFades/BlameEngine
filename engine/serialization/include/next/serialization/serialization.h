@@ -9,6 +9,7 @@
 #include <type_traits>
 #include <functional>
 #include <sstream>
+#include <cstring>
 
 namespace SerializationDetail {
 
@@ -303,18 +304,27 @@ public:
 
 private:
     std::vector<uint8_t> data_;
+    std::vector<size_t> arraySizeStack_;
     size_t readPos_ = 0;
     uint32_t version_ = 0;
 
     template<typename T>
-    T Read() {
-        if (readPos_ + sizeof(T) > data_.size()) {
-            return T{};
+    bool ReadValue(T& value) {
+        return ReadBytes(&value, sizeof(T));
+    }
+
+    bool ReadBytes(void* out, size_t size) {
+        if (!out && size != 0) {
+            return false;
         }
-        T value;
-        std::memcpy(&value, &data_[readPos_], sizeof(T));
-        readPos_ += sizeof(T);
-        return value;
+        if (readPos_ > data_.size() || size > data_.size() - readPos_) {
+            return false;
+        }
+        if (size != 0) {
+            std::memcpy(out, data_.data() + readPos_, size);
+        }
+        readPos_ += size;
+        return true;
     }
 };
 
@@ -541,7 +551,8 @@ SerializationResult DeserializeFromFile(T& obj, const std::string& filePath, Ser
         return SerializationResult::Fail(SerializationError::ParseError, "Failed to parse root object");
     }
 
-    uint32_t version = deserializer->ReadVersion();
+    const uint32_t version = deserializer->ReadVersion();
+    (void)version;
     obj.Deserialize(deserializer.get());
     deserializer->EndObject();
 

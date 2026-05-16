@@ -2331,7 +2331,7 @@ void DX12Renderer::RenderSamplerFeedbackDebug() {
 }
 
 void DX12Renderer::RenderDebugCells() {
-    const size_t cellCount = std::min(frameDesc_.debugCells.size(), kMaxRendererDebugCells);
+    const size_t cellCount = frameDesc_.RenderedDebugCellCount();
     if (cellCount == 0) {
         debugCellIndexCount_ = 0;
         giManager_.SetRayTracingSceneGeometry(
@@ -2354,7 +2354,7 @@ void DX12Renderer::RenderDebugCells() {
         const RendererDebugCell& cell = frameDesc_.debugCells[i];
         const float halfSize = std::max(1.0f, cell.size) * 0.47f;
         const float y = cell.center[1] - 1.0f;
-        const bool placeholder = (cell.flags & kRendererDebugCellPlaceholder) != 0;
+        const bool placeholder = cell.IsPlaceholder();
         const float color[4] = {
             placeholder ? 1.0f : 0.15f,
             placeholder ? 0.64f : 0.82f,

@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
@@ -57,6 +58,24 @@ static inline Vec3 Normalize(const Vec3& a) {
     return Mul(a, 1.0f / l);
 }
 
+static inline bool IsFinite(const Vec2& v) {
+    return std::isfinite(v.x) && std::isfinite(v.y);
+}
+
+static inline bool IsFinite(const Vec3& v) {
+    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+}
+
+static bool ParseVec2(std::string_view text, Vec2& out) {
+    std::istringstream iss{std::string(text)};
+    return static_cast<bool>(iss >> out.x >> out.y) && IsFinite(out);
+}
+
+static bool ParseVec3(std::string_view text, Vec3& out) {
+    std::istringstream iss{std::string(text)};
+    return static_cast<bool>(iss >> out.x >> out.y >> out.z) && IsFinite(out);
+}
+
 static inline bool StartsWith(std::string_view s, std::string_view prefix) {
     return s.size() >= prefix.size() && s.substr(0, prefix.size()) == prefix;
 }
@@ -104,11 +123,17 @@ static bool ParseFaceVertex(std::string_view token, int posCount, int uvCount, i
             sign = -1;
             i = 1;
         }
+        if (i == s.size()) return false;
+
         int v = 0;
         for (; i < s.size(); ++i) {
             char ch = s[i];
             if (ch < '0' || ch > '9') return false;
-            v = v * 10 + (ch - '0');
+            const int digit = ch - '0';
+            if (v > (std::numeric_limits<int>::max() - digit) / 10) {
+                return false;
+            }
+            v = v * 10 + digit;
         }
         outInt = v * sign;
         return true;
@@ -122,22 +147,28 @@ static bool ParseFaceVertex(std::string_view token, int posCount, int uvCount, i
         const size_t s2 = token.find('/', s1 + 1);
         if (s2 == std::string_view::npos) {
             // v/vt
-            hasB = parseInt(token.substr(s1 + 1), b);
+            hasB = true;
+            if (!parseInt(token.substr(s1 + 1), b)) return false;
         } else {
             // v/vt/vn or v//vn
             if (s2 > s1 + 1) {
-                hasB = parseInt(token.substr(s1 + 1, s2 - (s1 + 1)), b);
+                hasB = true;
+                if (!parseInt(token.substr(s1 + 1, s2 - (s1 + 1)), b)) return false;
             } else {
                 hasB = false;
             }
-            hasC = parseInt(token.substr(s2 + 1), c);
+            hasC = true;
+            if (!parseInt(token.substr(s2 + 1), c)) return false;
         }
     }
 
     out.pos = FixObjIndex(a, posCount);
     out.uv = hasB ? FixObjIndex(b, uvCount) : -1;
     out.nrm = hasC ? FixObjIndex(c, nrmCount) : -1;
-    return out.pos >= 0 && out.pos < posCount;
+    if (out.pos < 0 || out.pos >= posCount) return false;
+    if (hasB && (out.uv < 0 || out.uv >= uvCount)) return false;
+    if (hasC && (out.nrm < 0 || out.nrm >= nrmCount)) return false;
+    return true;
 }
 
 } // namespace
@@ -226,31 +257,39 @@ bool LoadObjMesh(const std::string& path, ObjMesh& out, std::string& outError) {
     };
 
     // Parse.
+    size_t lineNumber = 0;
     while (std::getline(in, line)) {
+        ++lineNumber;
         std::string_view s = Trim(std::string_view(line));
         if (s.empty() || s.front() == '#') continue;
 
         if (StartsWith(s, "v ")) {
-            std::istringstream iss(std::string(s.substr(2)));
             Vec3 p{};
-            iss >> p.x >> p.y >> p.z;
+            if (!ParseVec3(s.substr(2), p)) {
+                outError = "OBJ invalid vertex position: " + path + ":" + std::to_string(lineNumber);
+                return false;
+            }
             positions.push_back(p);
             continue;
         }
 
         if (StartsWith(s, "vt ")) {
-            std::istringstream iss(std::string(s.substr(3)));
             Vec2 t{};
-            iss >> t.x >> t.y;
+            if (!ParseVec2(s.substr(3), t)) {
+                outError = "OBJ invalid texture coordinate: " + path + ":" + std::to_string(lineNumber);
+                return false;
+            }
             // OBJ UV origin is typically bottom-left; keep as-is.
             uvs.push_back(t);
             continue;
         }
 
         if (StartsWith(s, "vn ")) {
-            std::istringstream iss(std::string(s.substr(3)));
             Vec3 n{};
-            iss >> n.x >> n.y >> n.z;
+            if (!ParseVec3(s.substr(3), n)) {
+                outError = "OBJ invalid normal: " + path + ":" + std::to_string(lineNumber);
+                return false;
+            }
             normals.push_back(n);
             continue;
         }
@@ -263,12 +302,16 @@ bool LoadObjMesh(const std::string& path, ObjMesh& out, std::string& outError) {
                 VertexKey key;
                 if (!ParseFaceVertex(tok, static_cast<int>(positions.size()), static_cast<int>(uvs.size()),
                                      static_cast<int>(normals.size()), key)) {
-                    continue;
+                    outError = "OBJ invalid face vertex '" + tok + "': " + path + ":" + std::to_string(lineNumber);
+                    return false;
                 }
                 face.push_back(key);
             }
 
-            if (face.size() < 3) continue;
+            if (face.size() < 3) {
+                outError = "OBJ face has fewer than three vertices: " + path + ":" + std::to_string(lineNumber);
+                return false;
+            }
 
             // Fan triangulation.
             for (size_t i = 1; i + 1 < face.size(); ++i) {
@@ -357,4 +400,3 @@ bool LoadObjMesh(const std::string& path, ObjMesh& out, std::string& outError) {
 }
 
 } // namespace Next
-

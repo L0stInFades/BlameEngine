@@ -43,7 +43,7 @@ TEST_F(LoggerTest, LogDifferentLevels) {
     NEXT_LOG_DEBUG("This is a debug message: %s", "test");
     NEXT_LOG_INFO("This is an info message: %.2f", 3.14f);
     NEXT_LOG_WARNING("This is a warning message: %x", 0xFF);
-    NEXT_LOG_ERROR("This is an error message: %p", nullptr);
+    NEXT_LOG_ERROR("This is an error message: %p", static_cast<void*>(nullptr));
 
     SUCCEED();
 }
@@ -53,6 +53,23 @@ TEST_F(LoggerTest, LogEmptyFormat) {
     NEXT_LOG_INFO("");
     NEXT_LOG_DEBUG("%s", "");
     SUCCEED();
+}
+
+// Test logging with a null format pointer
+TEST_F(LoggerTest, LogNullFormat) {
+    const char* nullFormat = nullptr;
+    ::testing::internal::CaptureStderr();
+#if defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-security"
+#endif
+    Logger::Log(LogLevel::Info, nullFormat);
+#if defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+    const std::string output = ::testing::internal::GetCapturedStderr();
+    ASSERT_FALSE(output.empty());
+    EXPECT_EQ(output.back(), '\n');
 }
 
 // Test logging with multiple arguments
@@ -73,9 +90,14 @@ TEST_F(LoggerTest, LogSpecialCharacters) {
 
 // Test logging with very long messages
 TEST_F(LoggerTest, LongMessage) {
-    std::string longMessage(1000, 'A');
+    std::string longMessage(8192, 'A');
+    ::testing::internal::CaptureStderr();
     NEXT_LOG_INFO("Long message: %s", longMessage.c_str());
-    SUCCEED();
+    const std::string output = ::testing::internal::GetCapturedStderr();
+    ASSERT_FALSE(output.empty());
+    EXPECT_NE(output.find("Long message:"), std::string::npos);
+    EXPECT_LT(output.size(), longMessage.size());
+    EXPECT_EQ(output.back(), '\n');
 }
 
 // Test that all log levels work (using macros)

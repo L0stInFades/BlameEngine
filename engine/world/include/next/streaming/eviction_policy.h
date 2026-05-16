@@ -120,14 +120,24 @@ public:
 
     // Statistics
     struct Statistics {
-        uint32_t totalEvictions;
-        uint32_t evictionsThisFrame;
-        uint32_t protectedCells;
-        float averageEvictionScore;
-        uint64_t memoryFreed;
+        uint32_t totalEvictions = 0;
+        uint32_t evictionsThisFrame = 0;
+        uint32_t protectedCells = 0;
+        float averageEvictionScore = 0.0f;
+        uint64_t memoryFreed = 0;
+
+        bool HasEvictions() const { return totalEvictions != 0; }
+        bool HasFrameEvictions() const { return evictionsThisFrame != 0; }
+        bool HasProtectedCells() const { return protectedCells != 0; }
+        bool HasAverageEvictionScore() const { return averageEvictionScore != 0.0f; }
+        bool HasMemoryFreed() const { return memoryFreed != 0; }
+        bool HasActivity() const {
+            return HasEvictions() || HasFrameEvictions() || HasProtectedCells() || HasMemoryFreed();
+        }
     };
 
     Statistics GetStatistics() const;
+    void RecordEvictionBatch(uint32_t evictionCount, uint64_t memoryFreed, float averageScore);
     void ResetStatistics();
 
     // Cleanup

@@ -12,13 +12,20 @@
 #include <eh.h>
 #endif
 
+#if defined(__clang__) || defined(__GNUC__)
+#define NEXT_PLATFORM_PRINTF_FORMAT(formatIndex, firstArg) __attribute__((format(printf, formatIndex, firstArg)))
+#else
+#define NEXT_PLATFORM_PRINTF_FORMAT(formatIndex, firstArg)
+#endif
+
 namespace Next {
 
 namespace {
 
-void PlatformLog(const char* level, const char* format, ...);
+void PlatformLog(const char* level, const char* format, ...) NEXT_PLATFORM_PRINTF_FORMAT(2, 3);
 
 #if defined(_WIN32)
+void LogWithPrefix(const char* level, const char* format, va_list args) NEXT_PLATFORM_PRINTF_FORMAT(2, 0);
 void LogWithPrefix(const char* level, const char* format, va_list args) {
     char buffer[1024] = {};
     int prefixLen = snprintf(buffer, sizeof(buffer), "%s ", level);
@@ -150,6 +157,7 @@ LONG WINAPI CrashHandler(EXCEPTION_POINTERS* exceptionInfo) {
 
 #else
 
+void LogWithPrefix(const char* level, const char* format, va_list args) NEXT_PLATFORM_PRINTF_FORMAT(2, 0);
 void LogWithPrefix(const char* level, const char* format, va_list args) {
     char buffer[1024] = {};
     int prefixLen = snprintf(buffer, sizeof(buffer), "%s ", level);
@@ -176,6 +184,8 @@ void PlatformLog(const char* level, const char* format, ...) {
 }
 
 } // namespace
+
+#undef NEXT_PLATFORM_PRINTF_FORMAT
 
 bool PlatformInitialize() {
 #if defined(_WIN32)

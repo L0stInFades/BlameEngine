@@ -6,6 +6,7 @@
 #include "next/streaming/lod_system.h"
 #include "next/streaming/eviction_policy.h"
 #include "next/jobsystem/job.h"
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 #include <unordered_map>
@@ -21,55 +22,128 @@ namespace Streaming {
 // ===== Streaming Handle =====
 
 struct StreamingHandle {
-    uint64_t id;
+    uint64_t id = 0;
 
-    operator bool() const { return id != 0; }
+    bool IsValid() const { return id != 0; }
+    void Reset() { id = 0; }
+    explicit operator bool() const { return IsValid(); }
     bool operator==(const StreamingHandle& other) const { return id == other.id; }
+    bool operator!=(const StreamingHandle& other) const { return !(*this == other); }
+
+    static StreamingHandle Invalid() { return {}; }
 };
 
 // ===== Asset Bundle =====
 
 struct AssetBundle {
-    uint64_t bundleId;
+    uint64_t bundleId = 0;
     std::wstring bundlePath;
     std::vector<CellCoord> cells;  // Cells contained in this bundle
-    uint64_t totalSize;
-    uint64_t compressedSize;
+    uint64_t totalSize = 0;
+    uint64_t compressedSize = 0;
 
     // Dependencies
     std::vector<uint64_t> dependencyBundles;
+
+    bool IsValid() const { return bundleId != 0; }
+    bool HasPath() const { return !bundlePath.empty(); }
+    bool HasCells() const { return !cells.empty(); }
+    bool HasDependencies() const { return !dependencyBundles.empty(); }
+    bool HasSize() const { return totalSize != 0 || compressedSize != 0; }
+    size_t CellCount() const { return cells.size(); }
+    float CompressionRatio() const {
+        return totalSize == 0 ? 0.0f : static_cast<float>(compressedSize) / static_cast<float>(totalSize);
+    }
 };
 
 // ===== Streaming Statistics =====
 
 struct StreamingStatistics {
     // Cell counts
-    uint32_t loadedCells;
-    uint32_t loadingCells;
-    uint32_t queuedCells;
-    uint32_t unloadedCells;
+    uint32_t loadedCells = 0;
+    uint32_t loadingCells = 0;
+    uint32_t queuedCells = 0;
+    uint32_t unloadedCells = 0;
 
     // Memory usage
-    uint64_t memoryUsed;
-    uint64_t memoryBudget;
-    float memoryUtilization;  // 0.0 - 1.0
+    uint64_t memoryUsed = 0;
+    uint64_t memoryBudget = 0;
+    float memoryUtilization = 0.0f;  // 0.0 - 1.0
 
     // Performance
-    float averageLoadTime;
-    float averageUnloadTime;
-    uint32_t cellsLoadedPerSecond;
-    uint32_t cellsUnloadedPerSecond;
+    float averageLoadTime = 0.0f;
+    float averageUnloadTime = 0.0f;
+    uint32_t cellsLoadedPerSecond = 0;
+    uint32_t cellsUnloadedPerSecond = 0;
 
     // Quality
-    uint32_t visibleCells;
-    uint32_t highDetailCells;
-    uint32_t lowDetailCells;
-    uint32_t hlodCells;
+    uint32_t visibleCells = 0;
+    uint32_t highDetailCells = 0;
+    uint32_t lowDetailCells = 0;
+    uint32_t hlodCells = 0;
 
     // Errors
-    uint32_t failedLoads;
-    uint32_t timeoutErrors;
-    uint32_t placeholderCells;
+    uint32_t failedLoads = 0;
+    uint32_t timeoutErrors = 0;
+    uint32_t placeholderCells = 0;
+
+    uint64_t PendingCellCount() const {
+        return static_cast<uint64_t>(loadingCells) + static_cast<uint64_t>(queuedCells);
+    }
+    uint64_t ActiveCellCount() const {
+        return static_cast<uint64_t>(loadedCells) + PendingCellCount();
+    }
+    bool HasLoadedCells() const { return loadedCells != 0; }
+    bool HasPendingCells() const { return PendingCellCount() != 0; }
+    bool HasActiveCells() const { return ActiveCellCount() != 0; }
+    bool HasVisibleCells() const { return visibleCells != 0; }
+    bool HasMemoryBudget() const { return memoryBudget != 0; }
+    bool HasMemoryUsage() const { return memoryUsed != 0 || memoryUtilization != 0.0f; }
+    bool IsOverMemoryBudget() const { return memoryBudget != 0 && memoryUsed > memoryBudget; }
+    bool HasFailures() const { return failedLoads != 0 || timeoutErrors != 0; }
+    bool HasPlaceholderCells() const { return placeholderCells != 0; }
+};
+
+// ===== Streaming Cell Info =====
+
+struct StreamingCellInfo {
+    CellCoord coord;
+    Vec3 worldPosition;
+    float cellSize = 0.0f;
+    CellLoadState state = CellLoadState::Unloaded;
+    uint32_t layerMask = 0;
+    size_t layerCount = 0;
+    size_t loadedLayerCount = 0;
+    uint64_t dataSize = 0;
+    uint64_t memorySize = 0;
+    float priority = 0.0f;
+    uint64_t lastAccessFrame = 0;
+    uint64_t asyncOperationHandle = 0;
+    bool placeholder = false;
+
+    bool IsLoaded() const { return state == CellLoadState::Loaded; }
+    bool IsPending() const {
+        return state == CellLoadState::Queued ||
+               state == CellLoadState::Loading ||
+               state == CellLoadState::Decompressing ||
+               state == CellLoadState::Uploading;
+    }
+    bool IsUnloading() const { return state == CellLoadState::Unloading; }
+    bool IsError() const { return state == CellLoadState::Error; }
+    bool IsPlaceholder() const { return placeholder; }
+    bool HasLayer(CellLayer layer) const { return (layerMask & CellMetadata::LayerBit(layer)) != 0; }
+    bool HasLayers() const { return layerMask != 0 || layerCount != 0; }
+    bool HasLoadedLayers() const { return loadedLayerCount != 0; }
+    bool HasDiskData() const { return dataSize != 0; }
+    bool HasMemoryData() const { return memorySize != 0; }
+    bool HasPriority() const { return priority != 0.0f; }
+    bool HasAsyncOperation() const { return asyncOperationHandle != 0; }
+    float MemoryToDiskRatio() const {
+        return dataSize == 0 ? 0.0f : static_cast<float>(memorySize) / static_cast<float>(dataSize);
+    }
+    float ClampedCellSize(float minimumSize = 1.0f) const {
+        return cellSize < minimumSize ? minimumSize : cellSize;
+    }
 };
 
 // ===== Streaming Manager Configuration =====
@@ -114,6 +188,13 @@ struct StreamingManagerConfig {
     bool enableVisualization = false;
     bool logStreamingEvents = false;
 
+    // Camera projection (used to drive LOD screen-size selection in Update()).
+    // Sensible streaming-scope defaults; override per-game if you know better.
+    float cameraFovRadians = 60.0f * 3.14159265358979323846f / 180.0f;
+    float cameraAspectRatio = 16.0f / 9.0f;
+    float cameraNearPlane = 0.1f;
+    float cameraFarPlane = 10000.0f;
+
     // Cell data loading (framework -> real IO integration).
     // If a cell file is missing and allowPlaceholderCellLoad==true, the cell will be marked loaded
     // with placeholder memory usage (keeps demos running without authoring data).
@@ -144,7 +225,10 @@ public:
     // Cell queries
     bool IsCellLoaded(const CellCoord& coord) const;
     CellData* GetCell(const CellCoord& coord);
+    const CellData* GetCell(const CellCoord& coord) const;
+    bool GetCellInfo(const CellCoord& coord, StreamingCellInfo& outInfo) const;
     std::vector<CellCoord> GetLoadedCells() const;
+    std::vector<StreamingCellInfo> GetLoadedCellInfos() const;
     // Returns cell coordinates whose centers are within `radius` of `position`.
     // Note: this includes cells that are not currently loaded.
     std::vector<CellCoord> GetCellsInRange(const Vec3& position, float radius) const;
@@ -153,6 +237,7 @@ public:
     StreamingHandle LoadAssetBundle(const std::wstring& bundlePath);
     void UnloadAssetBundle(StreamingHandle handle);
     bool IsAssetBundleLoaded(StreamingHandle handle) const;
+    bool GetAssetBundleInfo(StreamingHandle handle, AssetBundle& outBundle) const;
 
     // Layer management
     void LoadCellLayer(const CellCoord& coord, CellLayer layer, float priority = 0.0f);
@@ -170,14 +255,24 @@ public:
 
     // Statistics
     StreamingStatistics GetStatistics() const;
+    WorldPartition::Statistics GetWorldPartitionStatistics() const;
+    InterestManager::Statistics GetInterestStatistics() const;
+    IOStatistics GetIOStatistics() const;
+    LODSystem::Statistics GetLODStatistics() const;
+    EvictionPolicy::Statistics GetEvictionStatistics() const;
     void ResetStatistics();
 
     // Sub-systems access
     WorldPartition* GetWorldPartition() { return worldPartition_.get(); }
+    const WorldPartition* GetWorldPartition() const { return worldPartition_.get(); }
     AsyncIOSystem* GetAsyncIO() { return asyncIO_.get(); }
+    const AsyncIOSystem* GetAsyncIO() const { return asyncIO_.get(); }
     InterestManager* GetInterestManager() { return interestManager_.get(); }
+    const InterestManager* GetInterestManager() const { return interestManager_.get(); }
     LODSystem* GetLODSystem() { return lodSystem_.get(); }
+    const LODSystem* GetLODSystem() const { return lodSystem_.get(); }
     EvictionPolicy* GetEvictionPolicy() { return evictionPolicy_.get(); }
+    const EvictionPolicy* GetEvictionPolicy() const { return evictionPolicy_.get(); }
 
     // Memory management
     size_t GetMemoryUsage() const;
@@ -264,10 +359,15 @@ private:
     // Active operations
     struct ActiveCellOp {
         Next::JobHandle job;
+        uint64_t asyncRequestId = 0;
         std::wstring filePath;     // cell package path
         std::string packageName;   // derived from file stem
         uint64_t fileBytes = 0;
         bool packageBacked = false;
+        std::vector<uint8_t> rawReadBuffer;
+        std::vector<uint8_t> rawDecompressedBuffer;
+        uint64_t decompressedBytes = 0;
+        CompressionType compressionType = CompressionType::None;
     };
     std::unordered_map<CellCoord, ActiveCellOp, CellCoord::Hash> activeLoadOperations_;
     std::unordered_map<CellCoord, Next::JobHandle, CellCoord::Hash> activeUnloadOperations_;
@@ -279,6 +379,7 @@ private:
         bool packageBacked = false;
         std::string packageName;
         uint64_t bytes = 0;
+        uint64_t diskBytes = 0;
         std::vector<uint8_t> rawCellData;
         std::string error;
     };
@@ -290,6 +391,11 @@ private:
     std::unordered_map<CellCoord, uint64_t, CellCoord::Hash> cellToBundle_;
     std::unordered_map<CellCoord, std::string, CellCoord::Hash> cellToPackageName_;
     std::unordered_set<CellCoord, CellCoord::Hash> availableCells_;
+    std::unordered_map<CellCoord, std::wstring, CellCoord::Hash> availableCellPaths_;
+    std::unordered_map<uint64_t, std::unordered_map<CellCoord, std::wstring, CellCoord::Hash>> bundleCellPathIndex_;
+    std::unordered_set<CellCoord, CellCoord::Hash> bundleAvailableCells_;
+    std::unordered_map<CellCoord, std::wstring, CellCoord::Hash> bundleCellPaths_;
+    std::unordered_map<CellCoord, uint64_t, CellCoord::Hash> bundleCellPathOwners_;
 
     // Statistics
     StreamingStatistics stats_;

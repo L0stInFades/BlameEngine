@@ -22,9 +22,11 @@ struct NameComponent : public IComponent {
         memset(name, 0, MAX_NAME_LENGTH);
     }
 
-    NameComponent(const char* n) {
-        strncpy(name, n, MAX_NAME_LENGTH - 1);
-        name[MAX_NAME_LENGTH - 1] = '\0';
+    NameComponent(const char* n) : NameComponent() {
+        if (n) {
+            strncpy(name, n, MAX_NAME_LENGTH - 1);
+            name[MAX_NAME_LENGTH - 1] = '\0';
+        }
     }
 };
 
@@ -39,19 +41,28 @@ struct HierarchyComponent : public IComponent {
         memset(children, 0, sizeof(children));
     }
 
+    void NormalizeChildCount() {
+        if (childCount > MAX_CHILDREN) {
+            childCount = MAX_CHILDREN;
+        }
+    }
+
     void AddChild(Entity child) {
+        NormalizeChildCount();
         if (childCount < MAX_CHILDREN) {
             children[childCount++] = child;
         }
     }
 
     void RemoveChild(Entity child) {
+        NormalizeChildCount();
         for (uint32_t i = 0; i < childCount; ++i) {
             if (children[i] == child) {
                 // Shift remaining children
                 for (uint32_t j = i; j < childCount - 1; ++j) {
                     children[j] = children[j + 1];
                 }
+                children[childCount - 1] = Entity::Invalid();
                 childCount--;
                 return;
             }

@@ -29,19 +29,15 @@ add_library(next_task STATIC
 target_include_directories(next_task PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/engine/runtime/include
-    ${CMAKE_SOURCE_DIR}/engine/renderer/include
     ${CMAKE_SOURCE_DIR}/engine/foundation/include
     ${CMAKE_SOURCE_DIR}/engine/platform/include
-    ${CMAKE_SOURCE_DIR}/engine/log/include
     ${CMAKE_SOURCE_DIR}/engine/serialization/include
 )
 
 # 链接依赖
 target_link_libraries(next_task PUBLIC
     next_runtime
-    next_renderer
     next_foundation
-    next_log
     next_serialization
 )
 
@@ -64,6 +60,8 @@ else()
     target_compile_options(next_task PRIVATE
         -Wall
         -Wextra
+        -Wformat=2
+        -Werror=format
         -Wno-unused-parameter
     )
 endif()

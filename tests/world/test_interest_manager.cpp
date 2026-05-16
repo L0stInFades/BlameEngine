@@ -27,6 +27,10 @@ TEST(InterestManager, CameraFrustumInfluencesInterest) {
 
     EXPECT_GT(front, 0.0f);
     EXPECT_LE(back, front * 0.25f + 1e-6f);
+    im.Update(0.016f);
+    const InterestManager::Statistics stats = im.GetStatistics();
+    EXPECT_TRUE(stats.HasActiveInterestPoints());
+    EXPECT_TRUE(stats.HasInterestCells());
 
     im.Shutdown();
     wp.Shutdown();

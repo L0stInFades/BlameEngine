@@ -24,14 +24,25 @@ bool LoadTgaRGBA8(const std::string& path, ImageRGBA8& out, std::string& outErro
     }
 
     const std::streamsize fileSize = in.tellg();
+    if (fileSize < 0) {
+        outError = "Failed to determine TGA size: " + path;
+        return false;
+    }
     if (fileSize < 18) {
         outError = "TGA too small: " + path;
         return false;
     }
-    in.seekg(0);
+    in.seekg(0, std::ios::beg);
+    if (!in) {
+        outError = "Failed to seek TGA: " + path;
+        return false;
+    }
 
     std::vector<uint8_t> file(static_cast<size_t>(fileSize));
-    in.read(reinterpret_cast<char*>(file.data()), fileSize);
+    if (!in.read(reinterpret_cast<char*>(file.data()), fileSize)) {
+        outError = "Failed to read TGA: " + path;
+        return false;
+    }
     in.close();
 
     const uint8_t* h = file.data();
@@ -76,7 +87,7 @@ bool LoadTgaRGBA8(const std::string& path, ImageRGBA8& out, std::string& outErro
 
     const size_t srcBpp = (pixelDepth == 24) ? 3 : 4;
     const size_t srcSize = static_cast<size_t>(width) * static_cast<size_t>(height) * srcBpp;
-    if (offset + srcSize > file.size()) {
+    if (srcSize > file.size() - offset) {
         outError = "TGA truncated pixel data: " + path;
         return false;
     }
@@ -110,4 +121,3 @@ bool LoadTgaRGBA8(const std::string& path, ImageRGBA8& out, std::string& outErro
 }
 
 } // namespace Next
-

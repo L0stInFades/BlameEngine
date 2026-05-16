@@ -26,12 +26,12 @@ add_library(next_serialization STATIC
 # 设置包含目录
 target_include_directories(next_serialization PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/engine/log/include
+    ${CMAKE_SOURCE_DIR}/engine/foundation/include
 )
 
 # 链接依赖
 target_link_libraries(next_serialization PUBLIC
-    next_log
+    next_foundation
 )
 
 # Windows特定设置
@@ -53,6 +53,8 @@ else()
     target_compile_options(next_serialization PRIVATE
         -Wall
         -Wextra
+        -Wformat=2
+        -Werror=format
         -Wno-unused-parameter
     )
 endif()

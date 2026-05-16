@@ -6,11 +6,176 @@
 #include "next/profiler/profiler.h"
 #include "next/profiler/cpu_scope.h"
 #include <algorithm>
+#include <cstddef>
 #include <fstream>
 #include <cstring>
+#include <exception>
 #include <filesystem>
+#include <limits>
+#include <utility>
 
 namespace Next {
+
+namespace {
+
+constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
+
+bool MultiplySizeChecked(size_t lhs, size_t rhs, size_t& out) {
+    if (lhs != 0 && rhs > std::numeric_limits<size_t>::max() / lhs) {
+        out = 0;
+        return false;
+    }
+
+    out = lhs * rhs;
+    return true;
+}
+
+bool AddSizeChecked(size_t lhs, size_t rhs, size_t& out) {
+    if (rhs > std::numeric_limits<size_t>::max() - lhs) {
+        out = 0;
+        return false;
+    }
+
+    out = lhs + rhs;
+    return true;
+}
+
+bool ValidateMeshPayloadSize(const MeshHeader& header,
+                             size_t payloadSize,
+                             const std::string& storageKey) {
+    if (payloadSize != static_cast<size_t>(header.common.dataSize)) {
+        NEXT_LOG_ERROR("Mesh payload size mismatch: %s (declared: %u, actual: %zu)",
+                       storageKey.c_str(),
+                       header.common.dataSize,
+                       payloadSize);
+        return false;
+    }
+
+    size_t vertexBytes = 0;
+    const size_t indexSize =
+        header.indexType == 0 ? sizeof(uint16_t) :
+        header.indexType == 1 ? sizeof(uint32_t) : 0;
+    if (indexSize == 0) {
+        NEXT_LOG_ERROR("Mesh has invalid index type: %s (%u)", storageKey.c_str(), header.indexType);
+        return false;
+    }
+
+    size_t indexBytes = 0;
+    size_t submeshBytes = 0;
+    size_t requiredBytes = 0;
+    if (!MultiplySizeChecked(static_cast<size_t>(header.vertexCount),
+                             static_cast<size_t>(header.vertexStride),
+                             vertexBytes) ||
+        !MultiplySizeChecked(static_cast<size_t>(header.indexCount),
+                             indexSize,
+                             indexBytes) ||
+        !MultiplySizeChecked(static_cast<size_t>(header.materialCount),
+                             sizeof(uint32_t) * 2u,
+                             submeshBytes) ||
+        !AddSizeChecked(vertexBytes, indexBytes, requiredBytes) ||
+        !AddSizeChecked(requiredBytes, submeshBytes, requiredBytes)) {
+        NEXT_LOG_ERROR("Mesh payload size overflow: %s", storageKey.c_str());
+        return false;
+    }
+
+    if (payloadSize < requiredBytes) {
+        NEXT_LOG_ERROR("Mesh payload too small: %s (required: %zu, actual: %zu)",
+                       storageKey.c_str(),
+                       requiredBytes,
+                       payloadSize);
+        return false;
+    }
+
+    return true;
+}
+
+bool ValidateMaterialPayloadSize(const MaterialHeader& header,
+                                 size_t payloadSize,
+                                 const std::string& storageKey) {
+    if (payloadSize != static_cast<size_t>(header.common.dataSize)) {
+        NEXT_LOG_ERROR("Material payload size mismatch: %s (declared: %u, actual: %zu)",
+                       storageKey.c_str(),
+                       header.common.dataSize,
+                       payloadSize);
+        return false;
+    }
+
+    size_t textureBytes = 0;
+    size_t parameterBytes = 0;
+    size_t requiredBytes = 0;
+    if (!MultiplySizeChecked(static_cast<size_t>(header.textureCount),
+                             sizeof(TextureRef),
+                             textureBytes) ||
+        !MultiplySizeChecked(static_cast<size_t>(header.parameterCount),
+                             sizeof(MaterialParam),
+                             parameterBytes) ||
+        !AddSizeChecked(textureBytes, parameterBytes, requiredBytes)) {
+        NEXT_LOG_ERROR("Material payload size overflow: %s", storageKey.c_str());
+        return false;
+    }
+
+    if (payloadSize < requiredBytes) {
+        NEXT_LOG_ERROR("Material payload too small: %s (required: %zu, actual: %zu)",
+                       storageKey.c_str(),
+                       requiredBytes,
+                       payloadSize);
+        return false;
+    }
+
+    return true;
+}
+
+uint32_t TextureBytesPerPixel(const TextureHeader& header) {
+    if ((header.flags & TextureHeader::COMPRESSED) != 0) {
+        return 0;
+    }
+
+    switch (header.format) {
+        case kDxgiFormatR8G8B8A8Unorm:
+            return 4;
+        default:
+            return 0;
+    }
+}
+
+bool ValidateTexturePayloadSize(const TextureHeader& header,
+                                size_t payloadSize,
+                                const std::string& storageKey) {
+    if (payloadSize != static_cast<size_t>(header.common.dataSize)) {
+        NEXT_LOG_ERROR("Texture payload size mismatch: %s (declared: %u, actual: %zu)",
+                       storageKey.c_str(),
+                       header.common.dataSize,
+                       payloadSize);
+        return false;
+    }
+
+    const uint32_t bytesPerPixel = TextureBytesPerPixel(header);
+    if (bytesPerPixel == 0) {
+        return true;
+    }
+
+    const uint32_t depth = header.depth == 0 ? 1u : header.depth;
+    size_t requiredBytes = bytesPerPixel;
+    if (!MultiplySizeChecked(requiredBytes, static_cast<size_t>(header.width), requiredBytes) ||
+        !MultiplySizeChecked(requiredBytes, static_cast<size_t>(header.height), requiredBytes) ||
+        !MultiplySizeChecked(requiredBytes, static_cast<size_t>(depth), requiredBytes) ||
+        !MultiplySizeChecked(requiredBytes, static_cast<size_t>(header.arraySize), requiredBytes)) {
+        NEXT_LOG_ERROR("Texture payload size overflow: %s", storageKey.c_str());
+        return false;
+    }
+
+    if (payloadSize < requiredBytes) {
+        NEXT_LOG_ERROR("Texture payload too small: %s (required: %zu, actual: %zu)",
+                       storageKey.c_str(),
+                       requiredBytes,
+                       payloadSize);
+        return false;
+    }
+
+    return true;
+}
+
+} // namespace
 
 // AssetData base class - holds actual asset data with reference counting
 class AssetData {
@@ -111,8 +276,13 @@ bool AssetManager::Initialize() {
 void AssetManager::Shutdown() {
     NEXT_CPU_SCOPE("AssetManager::Shutdown");
     
-    NEXT_LOG_INFO("AssetManager shutting down, unloading %llu assets", loadedAssetsCount_.load());
+    NEXT_LOG_INFO("AssetManager shutting down, unloading %zu assets", loadedAssetsCount_.load());
     
+    {
+        std::lock_guard<std::mutex> callbackLock(callbackMutex_);
+        completedLoads_.clear();
+    }
+
     // Unload all assets
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -365,6 +535,10 @@ AssetHandle AssetManager::LoadAssetSync(const std::string& assetName) {
                 return AssetHandle();
             }
             size_t payloadSize = assetData.size() - sizeof(MeshHeader);
+            if (!ValidateMeshPayloadSize(meshHeader, payloadSize, storageKey)) {
+                failedLoads_++;
+                return AssetHandle();
+            }
             data = std::make_shared<MeshData>(id, packageName, meshHeader, assetData.data() + sizeof(MeshHeader), payloadSize);
             break;
         }
@@ -381,6 +555,10 @@ AssetHandle AssetManager::LoadAssetSync(const std::string& assetName) {
                 return AssetHandle();
             }
             size_t payloadSize = assetData.size() - sizeof(TextureHeader);
+            if (!ValidateTexturePayloadSize(texHeader, payloadSize, storageKey)) {
+                failedLoads_++;
+                return AssetHandle();
+            }
             data = std::make_shared<TextureData>(id, packageName, texHeader, assetData.data() + sizeof(TextureHeader), payloadSize);
             break;
         }
@@ -397,6 +575,19 @@ AssetHandle AssetManager::LoadAssetSync(const std::string& assetName) {
                 return AssetHandle();
             }
             size_t payloadSize = assetData.size() - sizeof(MaterialHeader);
+            if (!ValidateMaterialPayloadSize(matHeader, payloadSize, storageKey)) {
+                failedLoads_++;
+                return AssetHandle();
+            }
+            MaterialAssetView materialView{};
+            materialView.header = matHeader;
+            materialView.payload = assetData.data() + sizeof(MaterialHeader);
+            materialView.payloadBytes = payloadSize;
+            if (!materialView.HasValidPayload()) {
+                NEXT_LOG_ERROR("Invalid material payload: %s", storageKey.c_str());
+                failedLoads_++;
+                return AssetHandle();
+            }
             data = std::make_shared<MaterialData>(id, packageName, matHeader, assetData.data() + sizeof(MaterialHeader), payloadSize);
             break;
         }
@@ -414,6 +605,14 @@ AssetHandle AssetManager::LoadAssetSync(const std::string& assetName) {
 
     // Store in loaded assets
     std::lock_guard<std::mutex> lock(mutex_);
+    auto existingIt = loadedAssets_.find(storageKey);
+    if (existingIt != loadedAssets_.end() && existingIt->second) {
+        existingIt->second->AddRef();
+        NEXT_LOG_DEBUG("Asset already loaded after IO race: %s (refcount: %u)",
+                       storageKey.c_str(), existingIt->second->GetRefCount());
+        return AssetHandle(existingIt->second->GetID(), existingIt->second.get());
+    }
+
     data->AddRef(); // Initial reference
 
     loadedAssets_[storageKey] = data;
@@ -422,7 +621,7 @@ AssetHandle AssetManager::LoadAssetSync(const std::string& assetName) {
     loadedAssetsCount_++;
     totalMemory_ += data->GetPayloadSize();
 
-    NEXT_LOG_INFO("Asset loaded successfully: %s (ID: %llu, size: %llu bytes)",
+    NEXT_LOG_INFO("Asset loaded successfully: %s (ID: %llu, size: %zu bytes)",
                   storageKey.c_str(), id, data->GetPayloadSize());
 
     return AssetHandle(id, data.get());
@@ -433,25 +632,88 @@ void AssetManager::LoadAssetAsync(const std::string& assetName, AssetLoadCallbac
     
     pendingLoads_++;
     NEXT_LOG_DEBUG("Queueing async asset load: %s", assetName.c_str());
-    
-    // Submit job to JobSystem
-    auto& jobSystem = JobSystem::Instance();
-    jobSystem.Submit([this, assetName, callback]() {
+
+    auto loadTask = [this, assetName, callback = std::move(callback)]() mutable {
+        NEXT_CPU_SCOPE("AssetManager::AsyncLoadTask");
+
         AssetLoadResult result;
-        result.handle = LoadAssetSync(assetName);
-        result.success = result.handle.IsValid();
-        
-        if (!result.success) {
-            result.errorMessage = "Failed to load asset: " + assetName;
+        try {
+            result.handle = LoadAssetSync(assetName);
+            result.success = result.handle.IsValid();
+
+            if (!result.success) {
+                result.errorMessage = "Failed to load asset: " + assetName;
+            }
+        } catch (const std::exception& e) {
+            result.success = false;
+            result.errorMessage = "Exception while loading asset '" + assetName + "': " + e.what();
+            failedLoads_++;
+            NEXT_LOG_ERROR("%s", result.errorMessage.c_str());
+        } catch (...) {
+            result.success = false;
+            result.errorMessage = "Unknown exception while loading asset: " + assetName;
+            failedLoads_++;
+            NEXT_LOG_ERROR("%s", result.errorMessage.c_str());
         }
-        
+
         pendingLoads_--;
-        
-        // Call callback (would need to be on main thread in real implementation)
+
         if (callback) {
-            callback(result);
+            CompletedAssetLoad completed;
+            completed.result = std::move(result);
+            completed.callback = std::move(callback);
+
+            std::lock_guard<std::mutex> callbackLock(callbackMutex_);
+            completedLoads_.push_back(std::move(completed));
         }
-    }, JobPriority::Normal);
+    };
+
+    auto& jobSystem = JobSystem::Instance();
+    if (!jobSystem.IsInitialized()) {
+        loadTask();
+        return;
+    }
+
+    jobSystem.Submit(std::move(loadTask), JobPriority::Normal, {}, "AssetLoad");
+}
+
+size_t AssetManager::PumpAsyncCallbacks(size_t maxCallbacks) {
+    std::vector<CompletedAssetLoad> callbacks;
+
+    {
+        std::lock_guard<std::mutex> callbackLock(callbackMutex_);
+        if (completedLoads_.empty()) {
+            return 0;
+        }
+
+        const size_t callbackCount =
+            maxCallbacks == 0 ? completedLoads_.size() : std::min(maxCallbacks, completedLoads_.size());
+        callbacks.reserve(callbackCount);
+        for (size_t i = 0; i < callbackCount; ++i) {
+            callbacks.push_back(std::move(completedLoads_[i]));
+        }
+        completedLoads_.erase(completedLoads_.begin(),
+                              completedLoads_.begin() + static_cast<std::ptrdiff_t>(callbackCount));
+    }
+
+    for (CompletedAssetLoad& completed : callbacks) {
+        if (completed.callback) {
+            try {
+                completed.callback(completed.result);
+            } catch (const std::exception& e) {
+                NEXT_LOG_ERROR("Asset async callback threw an exception: %s", e.what());
+            } catch (...) {
+                NEXT_LOG_ERROR("Asset async callback threw an unknown exception");
+            }
+        }
+    }
+
+    return callbacks.size();
+}
+
+size_t AssetManager::GetPendingAsyncCallbackCount() const {
+    std::lock_guard<std::mutex> callbackLock(callbackMutex_);
+    return completedLoads_.size();
 }
 
 void AssetManager::UnloadAsset(const AssetHandle& handle) {
@@ -614,11 +876,63 @@ uint32_t AssetManager::GetRefCount(const AssetHandle& handle) const {
     return assetIt->second->GetRefCount();
 }
 
+bool AssetManager::GetMeshAssetView(const AssetHandle& handle, MeshAssetView& outView) const {
+    outView = {};
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_ptr<AssetData> data = FindAssetDataLocked(handle);
+    if (!data || data->GetType() != AssetType::Mesh) {
+        return false;
+    }
+
+    const auto* meshData = static_cast<const MeshData*>(data.get());
+    outView.header = meshData->GetHeader();
+    outView.payload = meshData->GetPayload();
+    outView.payloadBytes = meshData->GetPayloadSize();
+    return outView.payload != nullptr || outView.payloadBytes == 0;
+}
+
+bool AssetManager::GetTextureAssetView(const AssetHandle& handle, TextureAssetView& outView) const {
+    outView = {};
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_ptr<AssetData> data = FindAssetDataLocked(handle);
+    if (!data || data->GetType() != AssetType::Texture) {
+        return false;
+    }
+
+    const auto* textureData = static_cast<const TextureData*>(data.get());
+    outView.header = textureData->GetHeader();
+    outView.pixels = textureData->GetPayload();
+    outView.pixelBytes = textureData->GetPayloadSize();
+    return outView.pixels != nullptr || outView.pixelBytes == 0;
+}
+
+bool AssetManager::GetMaterialAssetView(const AssetHandle& handle, MaterialAssetView& outView) const {
+    outView = {};
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_ptr<AssetData> data = FindAssetDataLocked(handle);
+    if (!data || data->GetType() != AssetType::Material) {
+        return false;
+    }
+
+    const auto* materialData = static_cast<const MaterialData*>(data.get());
+    outView.header = materialData->GetHeader();
+    outView.payload = materialData->GetPayload();
+    outView.payloadBytes = materialData->GetPayloadSize();
+    return outView.payload != nullptr || outView.payloadBytes == 0;
+}
+
 AssetStats AssetManager::GetStats() const {
     AssetStats stats;
     stats.loadedAssets = loadedAssetsCount_.load();
     stats.totalMemory = totalMemory_.load();
     stats.pendingLoads = pendingLoads_.load();
+    {
+        std::lock_guard<std::mutex> callbackLock(callbackMutex_);
+        stats.pendingCallbacks = completedLoads_.size();
+    }
     stats.failedLoads = failedLoads_.load();
     return stats;
 }
@@ -645,6 +959,24 @@ uint32_t AssetManager::GetPackageRefCount(const std::string& packageName) const 
 
 std::shared_ptr<PackageContainer> AssetManager::LoadPackageInternal(const std::string& packagePath) {
     return PackageContainer::LoadFromFile(packagePath);
+}
+
+std::shared_ptr<AssetData> AssetManager::FindAssetDataLocked(const AssetHandle& handle) const {
+    if (!handle.IsValid()) {
+        return nullptr;
+    }
+
+    auto idIt = idToName_.find(handle.GetID());
+    if (idIt == idToName_.end()) {
+        return nullptr;
+    }
+
+    auto assetIt = loadedAssets_.find(idIt->second);
+    if (assetIt == loadedAssets_.end()) {
+        return nullptr;
+    }
+
+    return assetIt->second;
 }
 
 } // namespace Next

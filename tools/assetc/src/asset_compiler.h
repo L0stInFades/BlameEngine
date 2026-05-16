@@ -15,6 +15,9 @@ public:
     bool CompileMesh(const std::string& sourcePath, const std::string& outputPath);
     bool CompileTexture(const std::string& sourcePath, const std::string& outputPath);
     bool CompileMaterial(const std::string& sourcePath, const std::string& outputPath);
+    bool CompileCell(const std::string& sourcePath,
+                     const std::string& outputPath,
+                     const std::string& compression = "none");
     
     // Create package from compiled assets
     bool CreatePackage(const std::string& packageName,
@@ -32,6 +35,10 @@ private:
     // Test asset generation
     std::vector<uint8_t> GenerateTestMesh();
     std::vector<uint8_t> GenerateTestTexture();
+    std::vector<uint8_t> GenerateDefaultNormalTexture();
+    std::vector<uint8_t> GenerateDefaultMetallicRoughnessTexture();
+    std::vector<uint8_t> GenerateDefaultEmissiveTexture();
+    std::vector<uint8_t> GenerateDefaultOcclusionTexture();
     std::vector<uint8_t> GenerateTestMaterial();
     
     // Package creation

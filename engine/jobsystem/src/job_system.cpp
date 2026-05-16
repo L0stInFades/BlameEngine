@@ -3,6 +3,7 @@
 #include "next/profiler/cpu_scope.h"
 #include <chrono>
 #include <algorithm>
+#include <exception>
 
 namespace Next {
 
@@ -38,6 +39,16 @@ static int PriorityIndex(JobPriority p) {
     }
 }
 
+static const char* JobNameOrFallback(const std::shared_ptr<detail::JobState>& job) {
+    return job && !job->name.empty() ? job->name.c_str() : "<unnamed>";
+}
+
+static void LogJobException(const std::shared_ptr<detail::JobState>& job, const char* reason) {
+    NEXT_LOG_ERROR("JobSystem job '%s' threw an exception: %s",
+                   JobNameOrFallback(job),
+                   reason ? reason : "unknown");
+}
+
 JobSystem& JobSystem::Instance() {
     static JobSystem instance;
     return instance;
@@ -62,6 +73,7 @@ bool JobSystem::Initialize(uint32_t workerCount) {
     totalDurationUs_.store(0, std::memory_order_release);
     maxDurationUs_.store(0, std::memory_order_release);
     cancelledCount_.store(0, std::memory_order_release);
+    failedCount_.store(0, std::memory_order_release);
 
     if (workerCount == 0) {
         uint32_t hw = std::thread::hardware_concurrency();
@@ -107,6 +119,7 @@ void JobSystem::Shutdown() {
     totalDurationUs_.store(0, std::memory_order_release);
     maxDurationUs_.store(0, std::memory_order_release);
     cancelledCount_.store(0, std::memory_order_release);
+    failedCount_.store(0, std::memory_order_release);
 
     NEXT_LOG_INFO("JobSystem shutdown");
 }
@@ -178,23 +191,29 @@ void JobSystem::Cancel(const JobHandle& handle) {
     if (job->completed.load(std::memory_order_acquire)) {
         return;
     }
+    if (job->started.load(std::memory_order_acquire)) {
+        return;
+    }
 
     job->cancelled.store(true, std::memory_order_release);
 
     // Try to remove from queues to avoid work
+    bool removedFromQueue = false;
     {
         std::lock_guard<std::mutex> lock(queueMutex_);
         for (auto& queue : queues_) {
             auto it = std::find(queue.begin(), queue.end(), job);
             if (it != queue.end()) {
                 queue.erase(it);
+                removedFromQueue = true;
                 break;
             }
         }
     }
 
-    // Mark completed and wake dependents
-    FinishJob(job, 0);
+    if (removedFromQueue || !job->started.load(std::memory_order_acquire)) {
+        FinishJob(job, 0, true, false);
+    }
 }
 
 void JobSystem::Pump(double budgetMs) {
@@ -227,13 +246,23 @@ void JobSystem::Pump(double budgetMs) {
 
         auto jobStart = Clock::now();
         job->started.store(true, std::memory_order_release);
-        if (!job->cancelled.load(std::memory_order_acquire) && job->task) {
-            NEXT_CPU_SCOPE("JobTask");
-            job->task();
+        const bool shouldRun = !job->cancelled.load(std::memory_order_acquire) && job->task;
+        bool failed = false;
+        if (shouldRun) {
+            try {
+                NEXT_CPU_SCOPE("JobTask");
+                job->task();
+            } catch (const std::exception& e) {
+                failed = true;
+                LogJobException(job, e.what());
+            } catch (...) {
+                failed = true;
+                LogJobException(job, "unknown");
+            }
         }
         auto jobEnd = Clock::now();
         auto durationUs = std::chrono::duration_cast<std::chrono::microseconds>(jobEnd - jobStart).count();
-        this->FinishJob(job, static_cast<uint64_t>(durationUs));
+        this->FinishJob(job, static_cast<uint64_t>(durationUs), !shouldRun, failed);
 
         if (budgetMs >= 0.0) {
             double elapsedMs = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
@@ -256,6 +285,7 @@ JobSystemStats JobSystem::GetStats() const {
     stats.totalCompleted = completedCount_.load(std::memory_order_acquire);
     stats.activeWorkers = activeWorkers_.load(std::memory_order_acquire);
     stats.totalCancelled = cancelledCount_.load(std::memory_order_acquire);
+    stats.totalFailed = failedCount_.load(std::memory_order_acquire);
 
     uint64_t completed = stats.totalCompleted;
     uint64_t totalDuration = totalDurationUs_.load(std::memory_order_acquire);
@@ -277,14 +307,24 @@ void JobSystem::WorkerLoop(uint32_t workerIndex) {
         activeWorkers_.fetch_add(1, std::memory_order_relaxed);
         auto start = std::chrono::steady_clock::now();
         job->started.store(true, std::memory_order_release);
-        if (!job->cancelled.load(std::memory_order_acquire) && job->task) {
-            NEXT_CPU_SCOPE("JobTask");
-            job->task();
+        const bool shouldRun = !job->cancelled.load(std::memory_order_acquire) && job->task;
+        bool failed = false;
+        if (shouldRun) {
+            try {
+                NEXT_CPU_SCOPE("JobTask");
+                job->task();
+            } catch (const std::exception& e) {
+                failed = true;
+                LogJobException(job, e.what());
+            } catch (...) {
+                failed = true;
+                LogJobException(job, "unknown");
+            }
         }
         auto end = std::chrono::steady_clock::now();
         auto durationUs = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
-        this->FinishJob(job, static_cast<uint64_t>(durationUs));
+        this->FinishJob(job, static_cast<uint64_t>(durationUs), !shouldRun, failed);
         activeWorkers_.fetch_sub(1, std::memory_order_relaxed);
     }
     NEXT_LOG_INFO("JobSystem worker %u exiting", workerIndex);
@@ -292,6 +332,9 @@ void JobSystem::WorkerLoop(uint32_t workerIndex) {
 
 void JobSystem::EnqueueIfReady(const std::shared_ptr<detail::JobState>& job) {
     if (!job) return;
+    if (job->completed.load(std::memory_order_acquire)) {
+        return;
+    }
     if (job->queued.exchange(true, std::memory_order_acq_rel)) {
         return; // already queued
     }
@@ -335,13 +378,14 @@ std::shared_ptr<detail::JobState> JobSystem::TryPopJob() {
     return nullptr;
 }
 
-void JobSystem::FinishJob(const std::shared_ptr<detail::JobState>& job, uint64_t durationUs) {
+void JobSystem::FinishJob(const std::shared_ptr<detail::JobState>& job,
+                          uint64_t durationUs,
+                          bool cancelled,
+                          bool failed) {
     if (!TryMarkCompleted(job)) {
         return;
     }
-    job->task = nullptr;
 
-    bool cancelled = job->cancelled.load(std::memory_order_acquire);
     if (!cancelled) {
         totalDurationUs_.fetch_add(durationUs, std::memory_order_relaxed);
         uint64_t prevMax = maxDurationUs_.load(std::memory_order_relaxed);
@@ -350,6 +394,9 @@ void JobSystem::FinishJob(const std::shared_ptr<detail::JobState>& job, uint64_t
         }
     } else {
         cancelledCount_.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (failed) {
+        failedCount_.fetch_add(1, std::memory_order_relaxed);
     }
 
     completedCount_.fetch_add(1, std::memory_order_release);

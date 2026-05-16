@@ -25,6 +25,9 @@ terminal preset，不需要构建当前 Windows/DX12 渲染路径：
 ```bash
 cmake --preset terminal-dev
 cmake --build --preset terminal-dev
+out/build/terminal-dev/bin/hackops_demo \
+  --policy tools/nvim_surface_probe/sample_policy.py \
+  --snapshot /tmp/hackops-policy-snapshot.txt
 out/build/terminal-dev/bin/next_nvim_surface_probe \
   --clean \
   --file tools/nvim_surface_probe/sample_policy.py \

@@ -152,7 +152,14 @@ void World::Update(float deltaTime) {
 }
 
 std::vector<Entity> World::GetAllEntities() const {
-    return std::vector<Entity>(entities_.begin(), entities_.end());
+    std::vector<Entity> result(entities_.begin(), entities_.end());
+    std::sort(result.begin(), result.end(), [](const Entity& lhs, const Entity& rhs) {
+        if (lhs.id != rhs.id) {
+            return lhs.id < rhs.id;
+        }
+        return lhs.version < rhs.version;
+    });
+    return result;
 }
 
 World::WorldStats World::GetStats() const {

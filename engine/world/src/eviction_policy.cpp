@@ -50,6 +50,7 @@ void EvictionPolicy::Update(float deltaTime, const Vec3& cameraPosition, uint64_
 
     // Reset per-frame statistics
     evictionsThisFrame_ = 0;
+    stats_.evictionsThisFrame = 0;
 
     // Cache frame context for candidate selection.
     lastCameraPosition_ = cameraPosition;
@@ -228,8 +229,30 @@ EvictionPolicy::Statistics EvictionPolicy::GetStatistics() const {
     return stats_;
 }
 
+void EvictionPolicy::RecordEvictionBatch(uint32_t evictionCount, uint64_t memoryFreed, float averageScore) {
+    if (evictionCount == 0) {
+        return;
+    }
+
+    const uint32_t previousEvictions = stats_.totalEvictions;
+    stats_.totalEvictions += evictionCount;
+    evictionsThisFrame_ += evictionCount;
+    stats_.evictionsThisFrame = evictionsThisFrame_;
+    stats_.memoryFreed += memoryFreed;
+
+    const uint32_t totalEvictions = stats_.totalEvictions;
+    if (totalEvictions != 0) {
+        const float previousWeightedScore =
+            stats_.averageEvictionScore * static_cast<float>(previousEvictions);
+        const float batchWeightedScore = averageScore * static_cast<float>(evictionCount);
+        stats_.averageEvictionScore =
+            (previousWeightedScore + batchWeightedScore) / static_cast<float>(totalEvictions);
+    }
+}
+
 void EvictionPolicy::ResetStatistics() {
     stats_ = Statistics();
+    evictionsThisFrame_ = 0;
 }
 
 void EvictionPolicy::Shutdown() {
@@ -382,7 +405,6 @@ bool MemoryEvictionHelper::ValidateEvictionCandidates(
     size_t expectedMemoryFree
 ) {
     size_t totalMemory = 0;
-    uint32_t validCells = 0;
 
     for (const CellCoord& coord : candidates) {
         auto it = loadedCells.find(coord);
@@ -390,7 +412,6 @@ bool MemoryEvictionHelper::ValidateEvictionCandidates(
             const CellData* cell = it->second;
             if (cell) {
                 totalMemory += cell->metadata.memorySize;
-                validCells++;
             }
         }
     }

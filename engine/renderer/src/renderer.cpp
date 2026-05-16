@@ -4,6 +4,8 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
+#include <sstream>
 
 #ifdef _WIN32
 #include "next/renderer/dx12/dx12_renderer.h"
@@ -73,9 +75,65 @@ bool EqualsIgnoreCase(const char* a, const char* b) {
     return *a == '\0' && *b == '\0';
 }
 
+const char* RendererBoolName(bool value) {
+    return value ? "true" : "false";
+}
+
 } // namespace
 
 namespace Next {
+
+std::string RendererRenderPassStats::BuildLogSummary() const {
+    const RendererRenderPassColorAttachmentInfo* firstColorAttachment = GetColorAttachment(0);
+    const RendererRenderPassDepthStencilAttachmentInfo& depthStencil = depthStencilAttachment;
+
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2);
+    oss << "Renderer render pass stats: ready=" << RendererBoolName(ready)
+        << " name=\"" << GetDebugName() << "\""
+        << " descriptor=" << RHI::RenderPassDescriptorErrorName(descriptorError)
+        << " descriptorAttachment=" << descriptorErrorAttachmentIndex
+        << " descriptorFormat=" << RHI::FormatName(descriptorErrorFormat)
+        << " frameGraph=" << RHI::FrameGraphDescriptorErrorName(frameGraphValidation.error)
+        << " transitions=" << frameGraphTransitionCount
+        << " colors=" << colorAttachmentCount
+        << " colorCapacity=" << static_cast<unsigned int>(colorAttachments.size())
+        << " depthStencil=" << RendererBoolName(hasDepthStencil)
+        << " firstColor=" << RendererBoolName(firstColorAttachment != nullptr) << "/"
+        << RHI::FormatName(firstColorAttachment ? firstColorAttachment->format
+                                                : RHI::Format::Unknown) << "/"
+        << RHI::AttachmentLoadActionName(firstColorAttachment ? firstColorAttachment->loadAction
+                                                              : RHI::AttachmentLoadAction::DontCare) << "/"
+        << RHI::AttachmentStoreActionName(firstColorAttachment ? firstColorAttachment->storeAction
+                                                               : RHI::AttachmentStoreAction::DontCare)
+        << "/clear=" << (firstColorAttachment ? firstColorAttachment->clearColor.r : 0.0)
+        << "," << (firstColorAttachment ? firstColorAttachment->clearColor.g : 0.0)
+        << "," << (firstColorAttachment ? firstColorAttachment->clearColor.b : 0.0)
+        << "," << (firstColorAttachment ? firstColorAttachment->clearColor.a : 0.0)
+        << "/resolve=" << RendererBoolName(firstColorAttachment && firstColorAttachment->resolve)
+        << " depth=" << RendererBoolName(depthStencil.active) << "/"
+        << RHI::FormatName(depthStencil.format) << "/"
+        << RHI::AttachmentLoadActionName(depthStencil.loadAction) << "/"
+        << RHI::AttachmentStoreActionName(depthStencil.storeAction)
+        << "/clear=" << depthStencil.clearDepth
+        << " stencil=" << RHI::AttachmentLoadActionName(depthStencil.stencilLoadAction) << "/"
+        << RHI::AttachmentStoreActionName(depthStencil.stencilStoreAction)
+        << "/clear=" << depthStencil.clearStencil
+        << " resolve=" << RendererBoolName(depthStencil.resolve)
+        << " hasName=" << RendererBoolName(HasDebugName())
+        << " hasValidDescriptor=" << RendererBoolName(HasValidDescriptor())
+        << " hasFrameGraph=" << RendererBoolName(HasValidFrameGraphPassPlan())
+        << " hasFrameGraphTransitions=" << RendererBoolName(HasFrameGraphTransitions())
+        << " hasColors=" << RendererBoolName(HasColorAttachments())
+        << " hasMultipleColors=" << RendererBoolName(HasMultipleColorAttachments())
+        << " completeColors=" << RendererBoolName(HasCompleteColorAttachmentTable())
+        << " hasDepthStencil=" << RendererBoolName(HasDepthStencilAttachment())
+        << " hasAnyClear=" << RendererBoolName(HasAnyClear())
+        << " hasAnyStore=" << RendererBoolName(HasAnyStore())
+        << " hasAnyResolve=" << RendererBoolName(HasAnyResolve())
+        << " hasReadyPass=" << RendererBoolName(HasReadyRenderPass());
+    return oss.str();
+}
 
 RendererBackend Renderer::ParseBackend(const char* name) {
     if (!name || !*name) {

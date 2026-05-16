@@ -14,5 +14,12 @@ target_include_directories(next_runtime
 
 target_link_libraries(next_runtime PUBLIC next_foundation next_asset)
 
+if(NOT MSVC)
+    target_compile_options(next_runtime PRIVATE
+        -Wformat=2
+        -Werror=format
+    )
+endif()
+
 # Asset runtime module (CP3)
 add_subdirectory(asset)

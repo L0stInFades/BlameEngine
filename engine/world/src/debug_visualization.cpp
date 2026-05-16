@@ -1,12 +1,56 @@
 #include "next/streaming/debug_visualization.h"
-#include "next/log/log.h"
+#include "next/foundation/logger.h"
 #include <algorithm>
 #include <sstream>
 #include <limits>
 #include <cfloat>
+#include <chrono>
+#include <cstdint>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
 
 namespace Next {
 namespace Streaming {
+
+namespace {
+
+constexpr float kFrameTransientLifetime = 0.1f;  // ~6 frames @ 60fps
+
+// Convert a CellCoord to its world-space (x, z) min corner using a runtime
+// cellSize so debug overlays follow whatever the streaming partition uses.
+Vec3 CellMinCorner(const CellCoord& coord, float cellSize) {
+    return Vec3(static_cast<float>(coord.x) * cellSize,
+                0.0f,
+                static_cast<float>(coord.z) * cellSize);
+}
+
+Vec3 CellCenter(const CellCoord& coord, float cellSize) {
+    return Vec3((static_cast<float>(coord.x) + 0.5f) * cellSize,
+                0.0f,
+                (static_cast<float>(coord.z) + 0.5f) * cellSize);
+}
+
+float NowSeconds() {
+    using clock = std::chrono::steady_clock;
+    static const auto epoch = clock::now();
+    const auto delta = clock::now() - epoch;
+    return std::chrono::duration<float>(delta).count();
+}
+
+// Map a heatmap intensity in [0, 1] to a blue->yellow->red gradient.
+Vec3 HeatmapGradient(float intensity) {
+    if (intensity <= 0.0f) return Vec3(0.0f, 0.0f, 0.0f);
+    if (intensity >= 1.0f) return Vec3(1.0f, 0.0f, 0.0f);
+    if (intensity < 0.5f) {
+        const float t = intensity * 2.0f;  // 0..1 within blue->yellow band
+        return Vec3(t, t, 1.0f - t);
+    }
+    const float t = (intensity - 0.5f) * 2.0f;  // 0..1 within yellow->red band
+    return Vec3(1.0f, 1.0f - t, 0.0f);
+}
+
+} // namespace
 
 // ===== Debug Visualization System Implementation =====
 
@@ -22,15 +66,15 @@ DebugVisualizationSystem::~DebugVisualizationSystem() {
 
 bool DebugVisualizationSystem::Initialize(const DebugVisualizationConfig& config) {
     if (initialized_) {
-        NEXT_LOG_WARN() << "DebugVisualizationSystem already initialized";
+        NEXT_LOG_WARNING("DebugVisualizationSystem already initialized");
         return true;
     }
 
     config_ = config;
 
-    NEXT_LOG_INFO() << "DebugVisualizationSystem initialized (CP7: World Streaming)";
-    NEXT_LOG_INFO() << "  Visualization mode: " << static_cast<uint32_t>(config_.mode);
-    NEXT_LOG_INFO() << "  Enabled: " << (config_.enabled ? "yes" : "no");
+    NEXT_LOG_INFO("DebugVisualizationSystem initialized (CP7: World Streaming)");
+    NEXT_LOG_INFO("  Visualization mode: %u", static_cast<uint32_t>(config_.mode));
+    NEXT_LOG_INFO("  Enabled: %s", config_.enabled ? "yes" : "no");
 
     initialized_ = true;
     return true;
@@ -177,28 +221,147 @@ CellVisualizationData* DebugVisualizationSystem::GetCellVisualization(const Cell
 }
 
 void DebugVisualizationSystem::DrawStatisticsOverlay(const StreamingStatistics& stats) {
-    // TODO: Implement statistics overlay rendering
-    NEXT_LOG_WARN() << "Statistics overlay rendering not implemented";
+    if (!config_.showOverlay) {
+        return;
+    }
+
+    std::ostringstream oss;
+    oss << "Streaming"
+        << " loaded=" << stats.loadedCells
+        << " loading=" << stats.loadingCells
+        << " queued=" << stats.queuedCells
+        << " visible=" << stats.visibleCells;
+    Vec3 textPos(config_.overlayPosition.x, config_.overlayPosition.y, 0.0f);
+    DrawText(textPos, oss.str(), Vec3(1.0f, 1.0f, 1.0f),
+             config_.overlaySize, kFrameTransientLifetime);
+
+    std::ostringstream oss2;
+    oss2 << "Memory " << (stats.memoryUsed / (1024 * 1024)) << "MB / "
+         << (stats.memoryBudget / (1024 * 1024)) << "MB ("
+         << static_cast<int>(stats.memoryUtilization * 100.0f) << "%)";
+    Vec3 memPos(config_.overlayPosition.x,
+                config_.overlayPosition.y + config_.overlaySize + 2.0f,
+                0.0f);
+    DrawText(memPos, oss2.str(), Vec3(1.0f, 1.0f, 0.6f),
+             config_.overlaySize, kFrameTransientLifetime);
+
+    std::ostringstream oss3;
+    oss3 << "LOD high=" << stats.highDetailCells
+         << " low=" << stats.lowDetailCells
+         << " hlod=" << stats.hlodCells
+         << " errors=" << stats.failedLoads;
+    Vec3 lodPos(config_.overlayPosition.x,
+                config_.overlayPosition.y + (config_.overlaySize + 2.0f) * 2.0f,
+                0.0f);
+    DrawText(lodPos, oss3.str(), Vec3(0.7f, 1.0f, 0.7f),
+             config_.overlaySize, kFrameTransientLifetime);
 }
 
 void DebugVisualizationSystem::DrawPerformanceMetrics(const IOStatistics& ioStats) {
-    // TODO: Implement performance metrics rendering
-    NEXT_LOG_WARN() << "Performance metrics rendering not implemented";
+    if (!config_.showOverlay) {
+        return;
+    }
+
+    std::ostringstream oss;
+    oss.setf(std::ios::fixed);
+    oss << std::setprecision(2)
+        << "IO read=" << ioStats.averageReadSpeedMBps << "MB/s"
+        << " write=" << ioStats.averageWriteSpeedMBps << "MB/s"
+        << " decomp=" << ioStats.averageDecompressSpeedMBps << "MB/s";
+    Vec3 line1(config_.overlayPosition.x,
+               config_.overlayPosition.y + (config_.overlaySize + 2.0f) * 4.0f,
+               0.0f);
+    DrawText(line1, oss.str(), Vec3(0.7f, 0.9f, 1.0f),
+             config_.overlaySize, kFrameTransientLifetime);
+
+    std::ostringstream oss2;
+    oss2 << "IO pending r=" << ioStats.pendingReads
+         << " w=" << ioStats.pendingWrites
+         << " d=" << ioStats.pendingDecompressions
+         << " errors=" << ioStats.failedOperations;
+    Vec3 line2(config_.overlayPosition.x,
+               config_.overlayPosition.y + (config_.overlaySize + 2.0f) * 5.0f,
+               0.0f);
+    DrawText(line2, oss2.str(), Vec3(1.0f, 0.6f, 0.6f),
+             config_.overlaySize, kFrameTransientLifetime);
 }
 
 void DebugVisualizationSystem::UpdateHeatmap(const Vec3& position, float intensity) {
-    // TODO: Implement heatmap update
-    NEXT_LOG_WARN() << "Heatmap update not fully implemented";
+    // Quantize the world position into a heatmap cell and accumulate intensity.
+    const float cellSize = config_.cellSize > 0.0f ? config_.cellSize : 64.0f;
+    CellCoord coord(static_cast<int32_t>(std::floor(position.x / cellSize)),
+                    static_cast<int32_t>(std::floor(position.z / cellSize)));
+
+    HeatmapCell& cell = heatmap_[coord];
+    cell.intensity += intensity * config_.heatmapIntensity;
+    if (cell.intensity > 1.0f) cell.intensity = 1.0f;
+    cell.lastUpdateFrame = currentFrame_;
 }
 
 Vec3 DebugVisualizationSystem::GetHeatmapColor(const Vec3& position) const {
-    // TODO: Implement heatmap color lookup
-    return Vec3(0.0f, 0.0f, 0.0f);
+    const float cellSize = config_.cellSize > 0.0f ? config_.cellSize : 64.0f;
+    CellCoord coord(static_cast<int32_t>(std::floor(position.x / cellSize)),
+                    static_cast<int32_t>(std::floor(position.z / cellSize)));
+    auto it = heatmap_.find(coord);
+    if (it == heatmap_.end()) {
+        return Vec3(0.0f, 0.0f, 0.0f);
+    }
+    return HeatmapGradient(it->second.intensity);
 }
 
 void DebugVisualizationSystem::CaptureVisualization(const std::string& filename) {
-    // TODO: Implement screenshot capture
-    NEXT_LOG_WARN() << "Screenshot capture not implemented";
+    // Snapshot the current debug element buffers and cell visualization state
+    // to a text file the renderer-free tooling can ingest. Real screenshot
+    // capture would happen on the renderer side; this is the CPU-side dump.
+    std::ofstream out(filename);
+    if (!out) {
+        NEXT_LOG_WARNING("DebugVisualization: cannot open capture file %s", filename.c_str());
+        return;
+    }
+
+    out << "# Streaming debug capture (frame " << currentFrame_ << ")\n";
+    out << "[cells]\n";
+    for (const auto& [coord, data] : cellData_) {
+        out << coord.x << "," << coord.z
+            << " state=" << static_cast<uint32_t>(data.loadState)
+            << " priority=" << data.priority
+            << " mem=" << data.memoryUsage
+            << " lod=" << data.currentLOD
+            << " hlod=" << (data.isHLOD ? 1 : 0)
+            << " impostor=" << (data.isImpostor ? 1 : 0)
+            << "\n";
+    }
+
+    out << "[heatmap]\n";
+    for (const auto& [coord, cell] : heatmap_) {
+        out << coord.x << "," << coord.z
+            << " intensity=" << cell.intensity
+            << " lastFrame=" << cell.lastUpdateFrame
+            << "\n";
+    }
+
+    out << "[lines]\n";
+    for (const auto& line : lines_) {
+        out << line.start.x << "," << line.start.y << "," << line.start.z
+            << " -> " << line.end.x << "," << line.end.y << "," << line.end.z
+            << " color=" << line.color.x << "," << line.color.y << "," << line.color.z
+            << "\n";
+    }
+
+    out << "[boxes]\n";
+    for (const auto& box : boxes_) {
+        out << box.boundsMin.x << "," << box.boundsMin.y << "," << box.boundsMin.z
+            << " -> " << box.boundsMax.x << "," << box.boundsMax.y << "," << box.boundsMax.z
+            << " alpha=" << box.alpha
+            << "\n";
+    }
+
+    out << "[texts]\n";
+    for (const auto& text : texts_) {
+        out << text.position.x << "," << text.position.y << "," << text.position.z
+            << " size=" << text.size
+            << " text=\"" << text.text << "\"\n";
+    }
 }
 
 void DebugVisualizationSystem::Shutdown() {
@@ -211,7 +374,7 @@ void DebugVisualizationSystem::Shutdown() {
     heatmap_.clear();
 
     initialized_ = false;
-    NEXT_LOG_INFO() << "DebugVisualizationSystem shutdown complete";
+    NEXT_LOG_INFO("DebugVisualizationSystem shutdown complete");
 }
 
 // ===== Private Methods =====
@@ -242,38 +405,183 @@ void DebugVisualizationSystem::RenderLoadStateMode(const Mat4& viewMatrix, const
 }
 
 void DebugVisualizationSystem::RenderPriorityMode(const Mat4& viewMatrix, const Mat4& projectionMatrix) {
-    // TODO: Implement priority mode rendering
-    NEXT_LOG_WARN() << "Priority mode rendering not fully implemented";
+    (void)viewMatrix;
+    (void)projectionMatrix;
+
+    if (cellData_.empty()) return;
+
+    float minPri = std::numeric_limits<float>::max();
+    float maxPri = -std::numeric_limits<float>::max();
+    for (const auto& [coord, data] : cellData_) {
+        if (data.priority < minPri) minPri = data.priority;
+        if (data.priority > maxPri) maxPri = data.priority;
+    }
+
+    for (const auto& [coord, data] : cellData_) {
+        const Vec3 color = GetColorForPriority(data.priority, minPri, maxPri);
+        DrawCellBorder(coord, color, 0.6f);
+
+        if (config_.showCellText) {
+            std::ostringstream oss;
+            oss << "p=" << std::fixed << std::setprecision(2) << data.priority;
+            DrawCellText(coord, oss.str());
+        }
+    }
 }
 
 void DebugVisualizationSystem::RenderMemoryUsageMode(const Mat4& viewMatrix, const Mat4& projectionMatrix) {
-    // TODO: Implement memory usage mode rendering
-    NEXT_LOG_WARN() << "Memory usage mode rendering not fully implemented";
+    (void)viewMatrix;
+    (void)projectionMatrix;
+
+    if (cellData_.empty()) return;
+
+    uint64_t maxUsage = 1;
+    for (const auto& [coord, data] : cellData_) {
+        if (data.memoryUsage > maxUsage) maxUsage = data.memoryUsage;
+    }
+
+    for (const auto& [coord, data] : cellData_) {
+        const Vec3 color = GetColorForMemoryUsage(data.memoryUsage, maxUsage);
+        DrawCellBorder(coord, color, 0.6f);
+
+        if (config_.showCellText) {
+            std::ostringstream oss;
+            oss << (data.memoryUsage / 1024) << "KB";
+            DrawCellText(coord, oss.str());
+        }
+    }
 }
 
 void DebugVisualizationSystem::RenderLODMode(const Mat4& viewMatrix, const Mat4& projectionMatrix) {
-    // TODO: Implement LOD mode rendering
-    NEXT_LOG_WARN() << "LOD mode rendering not fully implemented";
+    (void)viewMatrix;
+    (void)projectionMatrix;
+
+    for (const auto& [coord, data] : cellData_) {
+        Vec3 color = GetColorForLOD(data.currentLOD);
+        // Darken impostors so the eye can distinguish them from regular LOD steps.
+        if (data.isImpostor) {
+            color = color * 0.5f;
+        }
+        DrawCellBorder(coord, color, data.isHLOD ? 0.8f : 0.5f);
+
+        if (config_.showCellText) {
+            std::ostringstream oss;
+            oss << "L" << data.currentLOD;
+            if (data.isHLOD) oss << "H";
+            if (data.isImpostor) oss << "I";
+            DrawCellText(coord, oss.str());
+        }
+    }
 }
 
 void DebugVisualizationSystem::RenderInterestMode(const Mat4& viewMatrix, const Mat4& projectionMatrix) {
-    // TODO: Implement interest mode rendering
-    NEXT_LOG_WARN() << "Interest mode rendering not fully implemented";
+    (void)viewMatrix;
+    (void)projectionMatrix;
+
+    // Interest is conveyed indirectly via priority and recent-access frame
+    // counters in CellVisualizationData. Highlight cells whose lastAccessFrame
+    // is within a recent window relative to the system's current frame.
+    constexpr uint64_t kRecentWindowFrames = 60;
+
+    for (const auto& [coord, data] : cellData_) {
+        const uint64_t age = (data.lastAccessFrame > currentFrame_)
+            ? 0
+            : (currentFrame_ - data.lastAccessFrame);
+
+        Vec3 color;
+        float alpha;
+        if (age <= kRecentWindowFrames) {
+            const float t = 1.0f - static_cast<float>(age) /
+                                   static_cast<float>(kRecentWindowFrames);
+            color = config_.lowPriorityColor * (1.0f - t) +
+                    config_.highPriorityColor * t;
+            alpha = 0.7f;
+        } else {
+            color = config_.unloadedColor;
+            alpha = 0.2f;
+        }
+        DrawCellBorder(coord, color, alpha);
+    }
 }
 
 void DebugVisualizationSystem::RenderPredictionMode(const Mat4& viewMatrix, const Mat4& projectionMatrix) {
-    // TODO: Implement prediction mode rendering
-    NEXT_LOG_WARN() << "Prediction mode rendering not fully implemented";
+    (void)viewMatrix;
+    (void)projectionMatrix;
+
+    // Prediction mode highlights cells whose priority comes from forward
+    // prefetch (priority > 0.5 by convention) — these are cells the streaming
+    // system expects to need soon. Connect them with debug lines so the
+    // predicted footprint reads at a glance.
+    std::vector<Vec3> predictedCenters;
+    predictedCenters.reserve(cellData_.size());
+
+    const float cellSize = config_.cellSize > 0.0f ? config_.cellSize : 64.0f;
+    for (const auto& [coord, data] : cellData_) {
+        if (data.priority < 0.5f) continue;
+        const Vec3 center = CellCenter(coord, cellSize);
+        predictedCenters.push_back(center);
+        DrawCellBorder(coord, config_.highPriorityColor, 0.7f);
+    }
+
+    if (predictedCenters.size() >= 2) {
+        std::sort(predictedCenters.begin(), predictedCenters.end(),
+                  [](const Vec3& a, const Vec3& b) {
+                      if (a.x != b.x) return a.x < b.x;
+                      return a.z < b.z;
+                  });
+        for (size_t i = 1; i < predictedCenters.size(); ++i) {
+            DrawLine(predictedCenters[i - 1], predictedCenters[i],
+                     config_.highPriorityColor, kFrameTransientLifetime);
+        }
+    }
 }
 
 void DebugVisualizationSystem::RenderIOMode(const Mat4& viewMatrix, const Mat4& projectionMatrix) {
-    // TODO: Implement IO mode rendering
-    NEXT_LOG_WARN() << "IO mode rendering not fully implemented";
+    (void)viewMatrix;
+    (void)projectionMatrix;
+
+    // Highlight cells that are currently in IO transitions (Loading, Queued,
+    // Unloading, Error) so disk pressure is visible at a glance. Already
+    // resident cells fade into the background.
+    for (const auto& [coord, data] : cellData_) {
+        Vec3 color;
+        float alpha = 0.35f;
+        switch (data.loadState) {
+            case CellLoadState::Loading:
+            case CellLoadState::Decompressing:
+            case CellLoadState::Uploading:
+                color = config_.loadingColor;
+                alpha = 0.9f;
+                break;
+            case CellLoadState::Queued:
+                color = config_.queuedColor;
+                alpha = 0.7f;
+                break;
+            case CellLoadState::Unloading:
+                color = config_.unloadingColor;
+                alpha = 0.7f;
+                break;
+            case CellLoadState::Error:
+                color = config_.errorColor;
+                alpha = 1.0f;
+                break;
+            default:
+                color = config_.loadedColor;
+                alpha = 0.2f;
+                break;
+        }
+        DrawCellBorder(coord, color, alpha);
+    }
 }
 
 void DebugVisualizationSystem::RenderHeatmapMode(const Mat4& viewMatrix, const Mat4& projectionMatrix) {
-    // TODO: Implement heatmap mode rendering
-    NEXT_LOG_WARN() << "Heatmap mode rendering not fully implemented";
+    (void)viewMatrix;
+    (void)projectionMatrix;
+
+    for (const auto& [coord, cell] : heatmap_) {
+        const Vec3 color = HeatmapGradient(cell.intensity);
+        DrawCellBorder(coord, color, std::min(1.0f, cell.intensity + 0.2f));
+    }
 }
 
 Vec3 DebugVisualizationSystem::GetColorForLoadState(CellLoadState state) const {
@@ -305,13 +613,31 @@ Vec3 DebugVisualizationSystem::GetColorForLOD(uint32_t lod) const {
 }
 
 void DebugVisualizationSystem::DrawCellBorder(const CellCoord& coord, const Vec3& color, float alpha) {
-    // TODO: Implement cell border rendering
-    NEXT_LOG_WARN() << "Cell border rendering not fully implemented";
+    if (!config_.showCellBorders) {
+        return;
+    }
+    (void)alpha;  // DebugLine doesn't carry alpha; reserved for renderer composition.
+
+    const float cellSize = config_.cellSize > 0.0f ? config_.cellSize : 64.0f;
+    const Vec3 origin = CellMinCorner(coord, cellSize);
+    const Vec3 c00(origin.x,            origin.y, origin.z);
+    const Vec3 c10(origin.x + cellSize, origin.y, origin.z);
+    const Vec3 c11(origin.x + cellSize, origin.y, origin.z + cellSize);
+    const Vec3 c01(origin.x,            origin.y, origin.z + cellSize);
+
+    DrawLine(c00, c10, color, kFrameTransientLifetime);
+    DrawLine(c10, c11, color, kFrameTransientLifetime);
+    DrawLine(c11, c01, color, kFrameTransientLifetime);
+    DrawLine(c01, c00, color, kFrameTransientLifetime);
 }
 
 void DebugVisualizationSystem::DrawCellText(const CellCoord& coord, const std::string& text) {
-    // TODO: Implement cell text rendering
-    NEXT_LOG_WARN() << "Cell text rendering not fully implemented";
+    if (!config_.showCellText) {
+        return;
+    }
+    const float cellSize = config_.cellSize > 0.0f ? config_.cellSize : 64.0f;
+    DrawText(CellCenter(coord, cellSize), text, Vec3(1.0f, 1.0f, 1.0f),
+             config_.overlaySize, kFrameTransientLifetime);
 }
 
 void DebugVisualizationSystem::UpdateHeatmapDecay() {
@@ -373,15 +699,24 @@ void DebugVisualizationSystem::RemoveExpiredElements() {
 }
 
 void DebugVisualizationSystem::RenderDebugLines(const Mat4& viewMatrix, const Mat4& projectionMatrix) {
-    // TODO: Implement debug line rendering
+    // If the renderer (or tool) installed a sink, drain the accumulated lines
+    // through it. Without a sink the buffer stays put and callers can pull via
+    // GetLines() — the streaming module never hard-depends on a GPU backend.
+    if (lineSink_ && !lines_.empty()) {
+        lineSink_(lines_, viewMatrix, projectionMatrix);
+    }
 }
 
 void DebugVisualizationSystem::RenderDebugBoxes(const Mat4& viewMatrix, const Mat4& projectionMatrix) {
-    // TODO: Implement debug box rendering
+    if (boxSink_ && !boxes_.empty()) {
+        boxSink_(boxes_, viewMatrix, projectionMatrix);
+    }
 }
 
 void DebugVisualizationSystem::RenderDebugText(const Mat4& viewMatrix, const Mat4& projectionMatrix) {
-    // TODO: Implement debug text rendering
+    if (textSink_ && !texts_.empty()) {
+        textSink_(texts_, viewMatrix, projectionMatrix);
+    }
 }
 
 // ===== Streaming Profiler Implementation =====
@@ -408,11 +743,46 @@ bool StreamingProfiler::Initialize(uint32_t maxSamples) {
 }
 
 void StreamingProfiler::BeginEvent(const std::string& name) {
-    // TODO: Implement event timing
+    if (!initialized_) {
+        return;
+    }
+
+    // Use the EventData slots themselves as the in-flight registry: an entry
+    // with endTime == 0 (and nonzero startTime) is a still-open event. This
+    // avoids growing a separate "open events" map while keeping correct LIFO
+    // semantics for nested events with the same name.
+    EventData event;
+    event.name = name;
+    event.startTime = NowSeconds();
+    event.endTime = 0.0f;
+    event.duration = 0.0f;
+
+    auto& bucket = events_[name];
+    bucket.push_back(event);
+    if (bucket.size() > maxSamples_) {
+        bucket.erase(bucket.begin());
+    }
 }
 
 void StreamingProfiler::EndEvent(const std::string& name) {
-    // TODO: Implement event timing
+    if (!initialized_) {
+        return;
+    }
+
+    auto it = events_.find(name);
+    if (it == events_.end() || it->second.empty()) {
+        return;
+    }
+
+    // Close the most recent still-open event (endTime == 0) — LIFO matches
+    // the typical Begin/End scoping.
+    for (auto rit = it->second.rbegin(); rit != it->second.rend(); ++rit) {
+        if (rit->endTime == 0.0f) {
+            rit->endTime = NowSeconds();
+            rit->duration = rit->endTime - rit->startTime;
+            return;
+        }
+    }
 }
 
 void StreamingProfiler::RecordMetric(const std::string& name, float value) {
@@ -494,8 +864,37 @@ uint32_t StreamingProfiler::GetEventCount(const std::string& name) const {
 }
 
 void StreamingProfiler::ExportToCSV(const std::string& filename) {
-    // TODO: Implement CSV export
-    NEXT_LOG_WARN() << "CSV export not implemented";
+    std::ofstream out(filename);
+    if (!out) {
+        NEXT_LOG_WARNING("StreamingProfiler: cannot open CSV file %s", filename.c_str());
+        return;
+    }
+
+    out.setf(std::ios::fixed);
+    out << std::setprecision(6);
+
+    out << "section,name,sample_index,start,end,duration\n";
+    for (const auto& [name, samples] : events_) {
+        for (size_t i = 0; i < samples.size(); ++i) {
+            const EventData& e = samples[i];
+            out << "event,"
+                << '"' << e.name << '"' << ','
+                << i << ','
+                << e.startTime << ','
+                << e.endTime << ','
+                << e.duration << '\n';
+        }
+    }
+
+    out << "section,name,average,min,max,sample_count\n";
+    for (const auto& [name, metric] : metrics_) {
+        out << "metric,"
+            << '"' << metric.name << '"' << ','
+            << metric.average << ','
+            << metric.minValue << ','
+            << metric.maxValue << ','
+            << metric.values.size() << '\n';
+    }
 }
 
 std::string StreamingProfiler::GenerateReport() const {

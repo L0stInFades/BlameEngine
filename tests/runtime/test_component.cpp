@@ -60,6 +60,13 @@ TEST_F(ComponentTest, NameComponentWithEmptyString) {
     EXPECT_STREQ(name.name, "");
 }
 
+TEST_F(ComponentTest, NameComponentWithNullString) {
+    NameComponent name(nullptr);
+
+    EXPECT_STREQ(name.name, "");
+    EXPECT_EQ(strlen(name.name), 0u);
+}
+
 // Test name component with special characters
 TEST_F(ComponentTest, NameComponentWithSpecialChars) {
     NameComponent name("Entity_123!@#$%");
@@ -150,6 +157,29 @@ TEST_F(ComponentTest, HierarchyComponentRemoveNonExistentChild) {
     hierarchy.RemoveChild(notChild);
 
     EXPECT_EQ(hierarchy.childCount, beforeCount);
+}
+
+TEST_F(ComponentTest, HierarchyComponentNormalizesInvalidChildCount) {
+    HierarchyComponent hierarchy;
+
+    Entity child1(1, 1);
+    Entity child2(2, 1);
+    Entity child3(3, 1);
+    hierarchy.children[0] = child1;
+    hierarchy.children[1] = child2;
+    hierarchy.childCount = HierarchyComponent::MAX_CHILDREN + 10;
+
+    hierarchy.RemoveChild(child1);
+
+    EXPECT_EQ(hierarchy.childCount, HierarchyComponent::MAX_CHILDREN - 1);
+    EXPECT_EQ(hierarchy.children[0], child2);
+    EXPECT_FALSE(hierarchy.children[hierarchy.childCount].IsValid());
+
+    HierarchyComponent fullHierarchy;
+    fullHierarchy.childCount = HierarchyComponent::MAX_CHILDREN + 10;
+    fullHierarchy.AddChild(child3);
+
+    EXPECT_EQ(fullHierarchy.childCount, HierarchyComponent::MAX_CHILDREN);
 }
 
 // Test hierarchy component set parent

@@ -31,6 +31,7 @@ struct JobSystemStats {
     double avgJobMs = 0.0;       ///< Average job execution time in milliseconds
     double maxJobMs = 0.0;       ///< Maximum job execution time in milliseconds
     uint64_t totalCancelled = 0; ///< Total jobs cancelled
+    uint64_t totalFailed = 0;    ///< Total jobs that threw an exception
 };
 
 /**
@@ -169,7 +170,10 @@ private:
     void EnqueueIfReady(const std::shared_ptr<detail::JobState>& job);
     std::shared_ptr<detail::JobState> PopJobBlocking();
     std::shared_ptr<detail::JobState> TryPopJob();
-    void FinishJob(const std::shared_ptr<detail::JobState>& job, uint64_t durationUs);
+    void FinishJob(const std::shared_ptr<detail::JobState>& job,
+                   uint64_t durationUs,
+                   bool cancelled,
+                   bool failed);
     bool TryMarkCompleted(const std::shared_ptr<detail::JobState>& job);
 
     bool running_ = false;
@@ -185,6 +189,7 @@ private:
     std::atomic<uint64_t> totalDurationUs_{0};
     std::atomic<uint64_t> maxDurationUs_{0};
     std::atomic<uint64_t> cancelledCount_{0};
+    std::atomic<uint64_t> failedCount_{0};
 };
 
 } // namespace Next

@@ -459,7 +459,6 @@ public:
 
 private:
     World* world_;
-    EventBus* eventBus_;
     TaskExecutorConfig config_;
 
     std::unordered_map<std::string, TaskDefinition> taskDefinitions_;

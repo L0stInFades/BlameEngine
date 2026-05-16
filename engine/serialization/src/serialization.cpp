@@ -1,5 +1,5 @@
 #include "next/serialization/serialization.h"
-#include "next/log/log.h"
+#include "next/foundation/logger.h"
 #include <fstream>
 #include <sstream>
 #include <cstring>
@@ -8,6 +8,33 @@
 #include <cctype>
 
 namespace Next {
+
+namespace {
+
+class SerializationLogStream {
+public:
+    explicit SerializationLogStream(LogLevel level)
+        : level_(level) {}
+
+    ~SerializationLogStream() {
+        Logger::Log(level_, "%s", stream_.str().c_str());
+    }
+
+    template <typename T>
+    SerializationLogStream& operator<<(const T& value) {
+        stream_ << value;
+        return *this;
+    }
+
+private:
+    LogLevel level_;
+    std::ostringstream stream_;
+};
+
+#define SERIALIZATION_LOG_INFO() SerializationLogStream(::Next::LogLevel::Info)
+#define SERIALIZATION_LOG_ERROR() SerializationLogStream(::Next::LogLevel::Error)
+
+} // namespace
 
 // =============================================================================
 // JSONSerializer 实现
@@ -47,7 +74,7 @@ void JSONSerializer::FinalizeDocument() {
 
     // We expect all user-opened containers to be closed, leaving only the document wrapper open.
     if (indentLevel_ != 1 || inArray_) {
-        NEXT_LOG_ERROR() << "JSONSerializer: cannot finalize document (indentLevel=" << indentLevel_
+        SERIALIZATION_LOG_ERROR() << "JSONSerializer: cannot finalize document (indentLevel=" << indentLevel_
                          << ", inArray=" << (inArray_ ? "true" : "false") << ")";
         return;
     }
@@ -257,14 +284,14 @@ SerializationResult JSONSerializer::SaveToFile(const std::string& filePath) {
 
     std::ofstream file(filePath);
     if (!file.is_open()) {
-        NEXT_LOG_ERROR() << "Failed to open file for writing: " << filePath;
+        SERIALIZATION_LOG_ERROR() << "Failed to open file for writing: " << filePath;
         return SerializationResult::Fail(SerializationError::IOError, "Failed to open file");
     }
 
     file << buffer_.str();
     file.close();
 
-    NEXT_LOG_INFO() << "Saved JSON to file: " << filePath;
+    SERIALIZATION_LOG_INFO() << "Saved JSON to file: " << filePath;
     return SerializationResult::Success();
 }
 
@@ -854,14 +881,14 @@ void BinarySerializer::WriteVersion(uint32_t version) {
 SerializationResult BinarySerializer::SaveToFile(const std::string& filePath) {
     std::ofstream file(filePath, std::ios::binary);
     if (!file.is_open()) {
-        NEXT_LOG_ERROR() << "Failed to open binary file for writing: " << filePath;
+        SERIALIZATION_LOG_ERROR() << "Failed to open binary file for writing: " << filePath;
         return SerializationResult::Fail(SerializationError::IOError, "Failed to open file");
     }
 
     file.write(reinterpret_cast<const char*>(buffer_.data()), buffer_.size());
     file.close();
 
-    NEXT_LOG_INFO() << "Saved binary data to file: " << filePath << " (" << buffer_.size() << " bytes)";
+    SERIALIZATION_LOG_INFO() << "Saved binary data to file: " << filePath << " (" << buffer_.size() << " bytes)";
     return SerializationResult::Success();
 }
 
@@ -875,69 +902,67 @@ std::string BinarySerializer::ToString() {
 
 BinaryDeserializer::BinaryDeserializer(const std::vector<uint8_t>& data)
     : data_(data), readPos_(0) {
-    // 读取版本号
-    if (data_.size() >= sizeof(uint32_t)) {
-        version_ = *reinterpret_cast<const uint32_t*>(data_.data());
-        readPos_ = sizeof(uint32_t);
+    uint32_t version = 0;
+    if (ReadValue(version)) {
+        version_ = version;
     }
 }
 
 bool BinaryDeserializer::ReadBool(const std::string& key, bool defaultValue) {
-    if (readPos_ + sizeof(bool) > data_.size()) return defaultValue;
-    bool value = *reinterpret_cast<const bool*>(&data_[readPos_]);
-    readPos_ += sizeof(bool);
+    bool value = false;
+    if (!ReadValue(value)) return defaultValue;
     return value;
 }
 
 int32_t BinaryDeserializer::ReadInt32(const std::string& key, int32_t defaultValue) {
-    if (readPos_ + sizeof(int32_t) > data_.size()) return defaultValue;
-    int32_t value = *reinterpret_cast<const int32_t*>(&data_[readPos_]);
-    readPos_ += sizeof(int32_t);
+    int32_t value = 0;
+    if (!ReadValue(value)) return defaultValue;
     return value;
 }
 
 int64_t BinaryDeserializer::ReadInt64(const std::string& key, int64_t defaultValue) {
-    if (readPos_ + sizeof(int64_t) > data_.size()) return defaultValue;
-    int64_t value = *reinterpret_cast<const int64_t*>(&data_[readPos_]);
-    readPos_ += sizeof(int64_t);
+    int64_t value = 0;
+    if (!ReadValue(value)) return defaultValue;
     return value;
 }
 
 uint32_t BinaryDeserializer::ReadUInt32(const std::string& key, uint32_t defaultValue) {
-    if (readPos_ + sizeof(uint32_t) > data_.size()) return defaultValue;
-    uint32_t value = *reinterpret_cast<const uint32_t*>(&data_[readPos_]);
-    readPos_ += sizeof(uint32_t);
+    uint32_t value = 0;
+    if (!ReadValue(value)) return defaultValue;
     return value;
 }
 
 uint64_t BinaryDeserializer::ReadUInt64(const std::string& key, uint64_t defaultValue) {
-    if (readPos_ + sizeof(uint64_t) > data_.size()) return defaultValue;
-    uint64_t value = *reinterpret_cast<const uint64_t*>(&data_[readPos_]);
-    readPos_ += sizeof(uint64_t);
+    uint64_t value = 0;
+    if (!ReadValue(value)) return defaultValue;
     return value;
 }
 
 float BinaryDeserializer::ReadFloat(const std::string& key, float defaultValue) {
-    if (readPos_ + sizeof(float) > data_.size()) return defaultValue;
-    float value = *reinterpret_cast<const float*>(&data_[readPos_]);
-    readPos_ += sizeof(float);
+    float value = 0.0f;
+    if (!ReadValue(value)) return defaultValue;
     return value;
 }
 
 double BinaryDeserializer::ReadDouble(const std::string& key, double defaultValue) {
-    if (readPos_ + sizeof(double) > data_.size()) return defaultValue;
-    double value = *reinterpret_cast<const double*>(&data_[readPos_]);
-    readPos_ += sizeof(double);
+    double value = 0.0;
+    if (!ReadValue(value)) return defaultValue;
     return value;
 }
 
 std::string BinaryDeserializer::ReadString(const std::string& key, const std::string& defaultValue) {
-    if (readPos_ + sizeof(uint32_t) > data_.size()) return defaultValue;
+    const size_t lengthOffset = readPos_;
+    uint32_t length = 0;
+    if (!ReadValue(length)) return defaultValue;
 
-    uint32_t length = *reinterpret_cast<const uint32_t*>(&data_[readPos_]);
-    readPos_ += sizeof(uint32_t);
+    if (static_cast<size_t>(length) > data_.size() - readPos_) {
+        readPos_ = lengthOffset;
+        return defaultValue;
+    }
 
-    if (readPos_ + length > data_.size()) return defaultValue;
+    if (length == 0) {
+        return "";
+    }
 
     std::string value(reinterpret_cast<const char*>(&data_[readPos_]), length);
     readPos_ += length;
@@ -945,17 +970,25 @@ std::string BinaryDeserializer::ReadString(const std::string& key, const std::st
 }
 
 bool BinaryDeserializer::BeginArray(const std::string& key) {
+    uint32_t size = 0;
+    if (!ReadValue(size)) {
+        return false;
+    }
+    arraySizeStack_.push_back(static_cast<size_t>(size));
     return true;
 }
 
 size_t BinaryDeserializer::GetArraySize() {
-    if (readPos_ + sizeof(uint32_t) > data_.size()) return 0;
-    uint32_t size = *reinterpret_cast<const uint32_t*>(&data_[readPos_]);
-    return static_cast<size_t>(size);
+    if (arraySizeStack_.empty()) {
+        return 0;
+    }
+    return arraySizeStack_.back();
 }
 
 void BinaryDeserializer::EndArray() {
-    // 无需操作
+    if (!arraySizeStack_.empty()) {
+        arraySizeStack_.pop_back();
+    }
 }
 
 bool BinaryDeserializer::BeginObject(const std::string& key) {
@@ -987,24 +1020,32 @@ bool BinaryDeserializer::GetObjectKeys(std::vector<std::string>& keys) {
 std::unique_ptr<Deserializer> Deserializer::LoadFromFile(const std::string& filePath, SerializationFormat format) {
     std::ifstream file(filePath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
-        NEXT_LOG_ERROR() << "Failed to open file for reading: " << filePath;
+        SERIALIZATION_LOG_ERROR() << "Failed to open file for reading: " << filePath;
         return nullptr;
     }
 
     std::streamsize size = file.tellg();
+    if (size < 0) {
+        SERIALIZATION_LOG_ERROR() << "Failed to determine file size: " << filePath;
+        return nullptr;
+    }
     file.seekg(0, std::ios::beg);
+    if (!file) {
+        SERIALIZATION_LOG_ERROR() << "Failed to seek file for reading: " << filePath;
+        return nullptr;
+    }
 
     if (format == SerializationFormat::Binary) {
-        std::vector<uint8_t> data(size);
-        if (!file.read(reinterpret_cast<char*>(data.data()), size)) {
-            NEXT_LOG_ERROR() << "Failed to read binary file: " << filePath;
+        std::vector<uint8_t> data(static_cast<size_t>(size));
+        if (size != 0 && !file.read(reinterpret_cast<char*>(data.data()), size)) {
+            SERIALIZATION_LOG_ERROR() << "Failed to read binary file: " << filePath;
             return nullptr;
         }
         return std::make_unique<BinaryDeserializer>(data);
     } else {
-        std::string data(size, '\0');
-        if (!file.read(&data[0], size)) {
-            NEXT_LOG_ERROR() << "Failed to read JSON file: " << filePath;
+        std::string data(static_cast<size_t>(size), '\0');
+        if (size != 0 && !file.read(data.data(), size)) {
+            SERIALIZATION_LOG_ERROR() << "Failed to read JSON file: " << filePath;
             return nullptr;
         }
         return std::make_unique<JSONDeserializer>(data);
@@ -1021,3 +1062,6 @@ std::unique_ptr<Deserializer> Deserializer::LoadFromString(const std::string& da
 }
 
 } // namespace Next
+
+#undef SERIALIZATION_LOG_INFO
+#undef SERIALIZATION_LOG_ERROR

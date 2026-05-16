@@ -15,3 +15,10 @@ target_link_libraries(next_profiler
     PRIVATE
         next_foundation
 )
+
+if(NOT MSVC)
+    target_compile_options(next_profiler PRIVATE
+        -Wformat=2
+        -Werror=format
+    )
+endif()

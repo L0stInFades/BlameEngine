@@ -129,10 +129,20 @@ void Logger::LogV(LogLevel level, const char* format, va_list args) {
     strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeInfo);
 
     // Format the complete log message
-    char buffer[4096];
+    char buffer[4096] = {};
     int prefixLen = snprintf(buffer, sizeof(buffer), "%s %s ", timeStr, levelStr);
-    if (prefixLen > 0 && prefixLen < static_cast<int>(sizeof(buffer))) {
-        vsnprintf(buffer + prefixLen, sizeof(buffer) - prefixLen, format, args);
+    if (prefixLen > 0 && prefixLen < static_cast<int>(sizeof(buffer)) && format) {
+        const int messageLen = vsnprintf(buffer + prefixLen,
+                                         sizeof(buffer) - static_cast<size_t>(prefixLen),
+                                         format,
+                                         args);
+        if (messageLen < 0) {
+            buffer[prefixLen] = '\0';
+        }
+    } else if (prefixLen < 0) {
+        buffer[0] = '\0';
+    } else {
+        buffer[sizeof(buffer) - 1] = '\0';
     }
     
     // Add newline
@@ -140,6 +150,9 @@ void Logger::LogV(LogLevel level, const char* format, va_list args) {
     if (len < sizeof(buffer) - 1) {
         buffer[len] = '\n';
         buffer[len + 1] = '\0';
+    } else {
+        buffer[sizeof(buffer) - 2] = '\n';
+        buffer[sizeof(buffer) - 1] = '\0';
     }
 
     // Output to both debugger and console

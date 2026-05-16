@@ -35,6 +35,8 @@ endif()
 option(BUILD_RENDERER "Build the platform renderer backend" ${NEXT_DEFAULT_BUILD_RENDERER})
 option(BUILD_EDITOR "Build the editor tool" ON)
 option(BUILD_TERMINAL "Build Neovim terminal/editor integration" ON)
+option(BUILD_GAME_HACKOPS "Build HackOps prototype game target" OFF)
+option(BUILD_LEGACY_LOG "Build deprecated next_log compatibility module" OFF)
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -50,10 +52,14 @@ if(WIN32)
 endif()
 
 # Engine modules
-add_subdirectory(engine/log)                # 统一日志系统
+add_subdirectory(engine/foundation)
+if(BUILD_LEGACY_LOG)
+    add_subdirectory(engine/log)
+endif()
 add_subdirectory(engine/serialization)      # 序列化系统
 add_subdirectory(engine/platform)
-add_subdirectory(engine/foundation)
+add_subdirectory(engine/compression)
+add_subdirectory(engine/rhi)
 add_subdirectory(engine/runtime)
 if(BUILD_RENDERER)
     add_subdirectory(engine/renderer)
@@ -83,6 +89,7 @@ add_subdirectory(engine/task)      # CP9: Task System
 # Tools
 if(BUILD_TOOLS)
     add_subdirectory(tools/assetc)
+    add_subdirectory(tools/compression_probe)
     if(BUILD_EDITOR AND BUILD_RENDERER AND WIN32)
         add_subdirectory(third_party/imgui)
         add_subdirectory(tools/editor)
@@ -95,6 +102,14 @@ if(BUILD_TOOLS)
 endif()
 
 # Game
+if(BUILD_GAME_HACKOPS)
+    if(BUILD_TERMINAL)
+        add_subdirectory(game/hackops)
+    else()
+        message(FATAL_ERROR "BUILD_GAME_HACKOPS=ON requires BUILD_TERMINAL=ON")
+    endif()
+endif()
+
 if(BUILD_GAME)
     if(BUILD_RENDERER)
         add_subdirectory(game/song)

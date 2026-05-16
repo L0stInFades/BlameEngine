@@ -51,7 +51,7 @@ struct IORequest {
     // Data buffers
     void* outputBuffer;
     uint64_t outputSize;
-    void* inputData;
+    const void* inputData;
     uint64_t inputSize;
 
     // Compression
@@ -102,7 +102,7 @@ struct IOStatistics {
     float averageWriteSpeedMBps;
     float averageDecompressSpeedMBps;
 
-    // Queue depths
+    // Outstanding operation counts (queued, in-flight, or waiting for main-thread callback dispatch).
     uint32_t pendingReads;
     uint32_t pendingWrites;
     uint32_t pendingDecompressions;
@@ -130,6 +130,34 @@ struct IOStatistics {
         , averageDecompressTime(0.0f)
         , failedOperations(0)
     {}
+
+    uint64_t TotalBytesProcessed() const {
+        return totalBytesRead + totalBytesWritten + totalBytesDecompressed;
+    }
+    uint64_t PendingOperationCount() const {
+        return static_cast<uint64_t>(pendingReads) +
+               static_cast<uint64_t>(pendingWrites) +
+               static_cast<uint64_t>(pendingDecompressions);
+    }
+    bool HasReadBytes() const { return totalBytesRead != 0; }
+    bool HasWrittenBytes() const { return totalBytesWritten != 0; }
+    bool HasDecompressedBytes() const { return totalBytesDecompressed != 0; }
+    bool HasProcessedBytes() const { return TotalBytesProcessed() != 0; }
+    bool HasPendingReads() const { return pendingReads != 0; }
+    bool HasPendingWrites() const { return pendingWrites != 0; }
+    bool HasPendingDecompressions() const { return pendingDecompressions != 0; }
+    bool HasPendingOperations() const { return PendingOperationCount() != 0; }
+    bool HasReadThroughput() const { return averageReadSpeedMBps != 0.0f; }
+    bool HasWriteThroughput() const { return averageWriteSpeedMBps != 0.0f; }
+    bool HasDecompressThroughput() const { return averageDecompressSpeedMBps != 0.0f; }
+    bool HasThroughput() const {
+        return HasReadThroughput() || HasWriteThroughput() || HasDecompressThroughput();
+    }
+    bool HasReadTiming() const { return averageReadTime != 0.0f; }
+    bool HasWriteTiming() const { return averageWriteTime != 0.0f; }
+    bool HasDecompressTiming() const { return averageDecompressTime != 0.0f; }
+    bool HasTiming() const { return HasReadTiming() || HasWriteTiming() || HasDecompressTiming(); }
+    bool HasFailures() const { return failedOperations != 0; }
 };
 
 // ===== Async IO Configuration =====
@@ -141,7 +169,7 @@ struct AsyncIOConfig {
 
     // Queue sizes
     uint32_t maxPendingRequests = 256;
-    uint32_t maxConcurrentReads = 32;
+    uint32_t maxConcurrentReads = 32; // Maximum outstanding read requests
 
     // Buffer sizes
     uint32_t readBufferSize = 1024 * 1024;  // 1MB default buffer
@@ -183,6 +211,23 @@ public:
         std::function<void(bool, uint64_t)> callback = nullptr,
         uint32_t priority = 0
     );
+    uint64_t SubmitWriteRequest(
+        const std::wstring& filePath,
+        uint64_t offset,
+        const void* inputData,
+        uint64_t size,
+        std::function<void(bool, uint64_t)> callback = nullptr,
+        uint32_t priority = 0
+    );
+    uint64_t SubmitDecompressRequest(
+        const void* inputData,
+        uint64_t inputSize,
+        void* outputBuffer,
+        uint64_t outputSize,
+        CompressionType compression = CompressionType::None,
+        std::function<void(bool, uint64_t)> callback = nullptr,
+        uint32_t priority = 0
+    );
 
     // Cancel request
     bool CancelRequest(uint64_t requestId);
@@ -192,10 +237,10 @@ public:
     void Update();
 
     // Statistics
-    IOStatistics GetStatistics() const { return stats_; }
+    IOStatistics GetStatistics() const;
 
     // Configuration
-    void SetConfig(const AsyncIOConfig& config) { config_ = config; }
+    bool SetConfig(const AsyncIOConfig& config);
     const AsyncIOConfig& GetConfig() const { return config_; }
 
     // Cleanup
@@ -219,6 +264,7 @@ private:
     void ProcessIOQueue();
     void ProcessDecompressionQueue();
     void ProcessCompletions();
+    void PumpSynchronousQueues();
 
     // Compression utilities
     bool CompressData(const void* input, uint64_t inputSize, void* output, uint64_t& outputSize, CompressionType type);
@@ -245,6 +291,17 @@ private:
         uint32_t errorCode = 0;
     };
 
+    bool WaitAndPopQueuedRequest(std::queue<InternalRequest>& queue, InternalRequest& request);
+    bool TryPopQueuedRequest(std::queue<InternalRequest>& queue, InternalRequest& request);
+    void ProcessIORequest(InternalRequest request);
+    void ProcessDecompressionRequest(InternalRequest request);
+    void ClearPendingQueues();
+    static void EnqueueRequestByPriority(std::queue<InternalRequest>& queue, const InternalRequest& request);
+    static bool RemoveQueuedRequest(std::queue<InternalRequest>& queue, uint64_t requestId);
+    void IncrementOutstandingRequest(IOOperationType type);
+    void DecrementOutstandingRequest(IOOperationType type);
+    void ResetOutstandingRequests();
+    uint64_t OutstandingRequestCount() const;
     uint64_t GenerateRequestId();
 
     // Configuration
@@ -253,8 +310,10 @@ private:
     // Thread handles
     std::vector<void*> ioThreads_;
     std::vector<void*> decompressionThreads_;
+#ifdef _WIN32
     void* ioCompletionPort_ = nullptr;
     void* shutdownEvent_ = nullptr;
+#endif
 
     // Request queues
     std::queue<InternalRequest> ioQueue_;
@@ -264,10 +323,14 @@ private:
     // Active requests
     std::unordered_map<uint64_t, InternalRequest> activeRequests_;
     std::atomic<uint64_t> nextRequestId_;
+    std::atomic<uint32_t> outstandingReads_;
+    std::atomic<uint32_t> outstandingWrites_;
+    std::atomic<uint32_t> outstandingDecompressions_;
 
     // Synchronization
-    std::mutex queueMutex_;
+    mutable std::mutex queueMutex_;
     std::mutex completionMutex_;
+    mutable std::mutex requestMutex_;
     std::condition_variable queueCondition_;
 
     // Statistics
@@ -275,13 +338,17 @@ private:
     std::atomic<uint64_t> totalBytesRead_;
     std::atomic<uint64_t> totalBytesWritten_;
     std::atomic<uint64_t> totalBytesDecompressed_;
+    std::atomic<uint32_t> failedOperations_;
 
     // State
     bool initialized_;
-    bool shuttingDown_;
+    std::atomic<bool> shuttingDown_;
 
-    // DirectStorage support (Windows only)
-    void* directStorageFactory_;  // IDStorageFactory*
+#ifdef _WIN32
+    // DirectStorage support (Windows only). See InitializeDirectStorage in
+    // async_io.cpp for the SDK integration boundary.
+    void* directStorageFactory_ = nullptr;  // IDStorageFactory*
+#endif
 };
 
 // ===== Memory Pool for Streaming =====
@@ -314,7 +381,8 @@ private:
     struct Allocation {
         void* ptr;
         size_t size;
-        uint32_t padding;
+        size_t padding = 0;
+        bool freed = false;  // Tombstone set by Free(); collapsed off the top by Free/Defragment.
     };
 
     uint8_t* poolBase_;

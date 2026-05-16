@@ -1,11 +1,106 @@
 #include "next/runtime/asset/package_container.h"
 #include "next/foundation/logger.h"
 #include "next/profiler/cpu_scope.h"
+#include <array>
 #include <fstream>
 #include <algorithm>
 #include <cstring>
+#include <exception>
+#include <limits>
 
 namespace Next {
+
+namespace {
+
+constexpr uint64_t kCrc64EcmaPolynomial = 0x42F0E1EBA9EA3693ULL;
+constexpr size_t kChecksumChunkSize = 64 * 1024;
+
+size_t AssetPayloadOffset(AssetType type) {
+    switch (type) {
+        case AssetType::Mesh:
+            return sizeof(MeshHeader);
+        case AssetType::Texture:
+            return sizeof(TextureHeader);
+        case AssetType::Material:
+            return sizeof(MaterialHeader);
+        default:
+            return 0;
+    }
+}
+
+bool FixedStringIsNullTerminated(const char* value, size_t size) {
+    return std::memchr(value, '\0', size) != nullptr;
+}
+
+uint64_t UpdateCRC64(uint64_t crc, const uint8_t* bytes, size_t size) {
+    if (!bytes && size != 0) {
+        return crc;
+    }
+
+    for (size_t i = 0; i < size; ++i) {
+        crc ^= static_cast<uint64_t>(bytes[i]) << 56;
+        for (int j = 0; j < 8; ++j) {
+            if ((crc & 0x8000000000000000ULL) != 0) {
+                crc = (crc << 1) ^ kCrc64EcmaPolynomial;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+
+    return crc;
+}
+
+bool SeekAbsolute(std::ifstream& file, size_t offset) {
+    if (offset > static_cast<size_t>(std::numeric_limits<std::streamoff>::max())) {
+        return false;
+    }
+
+    file.clear();
+    file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+    return static_cast<bool>(file);
+}
+
+bool ReadExact(std::ifstream& file, void* output, size_t size) {
+    if (size == 0) {
+        return true;
+    }
+    if (size > static_cast<size_t>(std::numeric_limits<std::streamsize>::max())) {
+        return false;
+    }
+
+    const auto requested = static_cast<std::streamsize>(size);
+    file.read(reinterpret_cast<char*>(output), requested);
+    return file.gcount() == requested && !file.bad();
+}
+
+bool CalculatePackagePayloadChecksum(std::ifstream& file,
+                                     size_t payloadOffset,
+                                     size_t payloadSize,
+                                     uint64_t& outChecksum) {
+    if (!SeekAbsolute(file, payloadOffset)) {
+        return false;
+    }
+
+    std::array<uint8_t, kChecksumChunkSize> buffer{};
+    size_t remaining = payloadSize;
+    uint64_t crc = 0;
+
+    while (remaining > 0) {
+        const size_t chunkSize = std::min(remaining, buffer.size());
+        if (!ReadExact(file, buffer.data(), chunkSize)) {
+            return false;
+        }
+
+        crc = UpdateCRC64(crc, buffer.data(), chunkSize);
+        remaining -= chunkSize;
+    }
+
+    outChecksum = crc;
+    return true;
+}
+
+} // namespace
 
 PackageContainer::~PackageContainer() {
     NEXT_LOG_DEBUG("Package container destroyed: %s", name_.c_str());
@@ -32,13 +127,14 @@ std::shared_ptr<PackageContainer> PackageContainer::LoadFromFile(const std::stri
 bool PackageContainer::Initialize(const std::string& filePath) {
     filePath_ = filePath;
     
-    // Extract name from file path
-    size_t slashPos = filePath.find_last_of("/\\");
-    size_t dotPos = filePath.find_last_of('.');
-    if (dotPos != std::string::npos && dotPos > slashPos) {
-        name_ = filePath.substr(slashPos + 1, dotPos - slashPos - 1);
+    // Extract name from file path.
+    const size_t slashPos = filePath.find_last_of("/\\");
+    const size_t nameStart = slashPos == std::string::npos ? 0 : slashPos + 1;
+    const size_t dotPos = filePath.find_last_of('.');
+    if (dotPos != std::string::npos && dotPos > nameStart) {
+        name_ = filePath.substr(nameStart, dotPos - nameStart);
     } else {
-        name_ = filePath.substr(slashPos + 1);
+        name_ = filePath.substr(nameStart);
     }
     
     // For CP3, we'll use simple file I/O instead of memory mapping
@@ -49,12 +145,75 @@ bool PackageContainer::Initialize(const std::string& filePath) {
         NEXT_LOG_ERROR("Failed to open package file: %s", filePath.c_str());
         return false;
     }
+
+    file.seekg(0, std::ios::end);
+    const std::streampos endPos = file.tellg();
+    if (endPos < static_cast<std::streamoff>(sizeof(PackageHeader))) {
+        NEXT_LOG_ERROR("Package file too small: %s", filePath.c_str());
+        return false;
+    }
+    const size_t fileSize = static_cast<size_t>(endPos);
+    file.seekg(0, std::ios::beg);
     
     // Read package header
     file.read(reinterpret_cast<char*>(&packageHeader_), sizeof(PackageHeader));
+    if (!file) {
+        NEXT_LOG_ERROR("Failed to read package header: %s", filePath.c_str());
+        return false;
+    }
     
     if (!packageHeader_.Validate()) {
         NEXT_LOG_ERROR("Invalid package header in: %s", filePath.c_str());
+        return false;
+    }
+
+    if (packageHeader_.checksum != 0) {
+        uint64_t calculatedChecksum = 0;
+        if (!CalculatePackagePayloadChecksum(file,
+                                             sizeof(PackageHeader),
+                                             fileSize - sizeof(PackageHeader),
+                                             calculatedChecksum)) {
+            NEXT_LOG_ERROR("Failed to read package payload for checksum: %s", filePath.c_str());
+            return false;
+        }
+
+        if (calculatedChecksum != packageHeader_.checksum) {
+            NEXT_LOG_ERROR("Package checksum mismatch for %s (expected: %llx, got: %llx)",
+                           filePath.c_str(),
+                           packageHeader_.checksum,
+                           calculatedChecksum);
+            return false;
+        }
+
+        file.clear();
+    }
+
+    const size_t indexOffset = packageHeader_.indexOffset;
+    const size_t dataOffset = packageHeader_.dataOffset;
+    const size_t assetCount = packageHeader_.assetCount;
+    if (indexOffset > fileSize || dataOffset > fileSize) {
+        NEXT_LOG_ERROR("Package offsets outside file bounds: %s", filePath.c_str());
+        return false;
+    }
+
+    if (assetCount == 0) {
+        NEXT_LOG_ERROR("Package has no assets: %s", filePath.c_str());
+        return false;
+    }
+
+    if (assetCount > std::numeric_limits<size_t>::max() / sizeof(AssetEntry)) {
+        NEXT_LOG_ERROR("Package asset index too large: %s", filePath.c_str());
+        return false;
+    }
+
+    const size_t assetIndexBytes = assetCount * sizeof(AssetEntry);
+    if (assetIndexBytes > dataOffset - indexOffset) {
+        NEXT_LOG_ERROR("Package asset index overlaps data section: %s", filePath.c_str());
+        return false;
+    }
+
+    if (assetIndexBytes > static_cast<size_t>(std::numeric_limits<std::streamsize>::max())) {
+        NEXT_LOG_ERROR("Package asset index exceeds readable stream size: %s", filePath.c_str());
         return false;
     }
     
@@ -62,21 +221,68 @@ bool PackageContainer::Initialize(const std::string& filePath) {
                  name_.c_str(), packageHeader_.version, packageHeader_.assetCount);
     
     // Read asset index
-    file.seekg(packageHeader_.indexOffset);
-    assetEntries_.resize(packageHeader_.assetCount);
-    file.read(reinterpret_cast<char*>(assetEntries_.data()), 
-              sizeof(AssetEntry) * packageHeader_.assetCount);
-    
-    // Build name to index map
-    for (size_t i = 0; i < assetEntries_.size(); ++i) {
-        nameToIndex_[assetEntries_[i].name] = i;
+    try {
+        assetEntries_.resize(assetCount);
+    } catch (const std::exception& e) {
+        NEXT_LOG_ERROR("Failed to allocate package asset index: %s", e.what());
+        return false;
+    }
+
+    if (!SeekAbsolute(file, indexOffset) ||
+        !ReadExact(file, assetEntries_.data(), assetIndexBytes)) {
+        NEXT_LOG_ERROR("Failed to read package asset index: %s", filePath.c_str());
+        return false;
     }
     
-    // Store data section info
+    // Validate asset entries before trusting their offsets for allocation or reads.
     dataSectionSize_ = 0;
-    for (const auto& entry : assetEntries_) {
-        dataSectionSize_ = std::max(dataSectionSize_,
-                                   static_cast<size_t>(entry.dataOffset + entry.assetSize));
+    nameToIndex_.clear();
+    const size_t packageDataBytes = fileSize - dataOffset;
+    for (size_t i = 0; i < assetEntries_.size(); ++i) {
+        const AssetEntry& entry = assetEntries_[i];
+        const uint32_t typeValue = static_cast<uint32_t>(entry.assetType);
+        if (typeValue == static_cast<uint32_t>(AssetType::Unknown) ||
+            typeValue >= static_cast<uint32_t>(AssetType::Count)) {
+            NEXT_LOG_ERROR("Invalid asset type in package index: %u", typeValue);
+            return false;
+        }
+
+        if (!FixedStringIsNullTerminated(entry.name, sizeof(entry.name)) || entry.name[0] == '\0') {
+            NEXT_LOG_ERROR("Invalid asset name in package index");
+            return false;
+        }
+
+        const size_t minAssetSize = AssetPayloadOffset(entry.assetType);
+        if (entry.assetSize < minAssetSize) {
+            NEXT_LOG_ERROR("Asset entry too small in package index: %s", entry.name);
+            return false;
+        }
+
+        if (entry.compressedSize != 0) {
+            NEXT_LOG_ERROR("Compressed asset entries are not supported yet: %s", entry.name);
+            return false;
+        }
+
+        if (entry.decompressedSize != entry.assetSize) {
+            NEXT_LOG_ERROR("Asset entry decompressed size mismatch: %s", entry.name);
+            return false;
+        }
+
+        const size_t entryOffset = entry.dataOffset;
+        const size_t entrySize = entry.assetSize;
+        if (entryOffset > packageDataBytes || entrySize > packageDataBytes - entryOffset) {
+            NEXT_LOG_ERROR("Asset entry outside data section: %s", entry.name);
+            return false;
+        }
+
+        const std::string entryName(entry.name);
+        if (nameToIndex_.find(entryName) != nameToIndex_.end()) {
+            NEXT_LOG_ERROR("Duplicate asset name in package: %s", entryName.c_str());
+            return false;
+        }
+        nameToIndex_[entryName] = i;
+
+        dataSectionSize_ = std::max(dataSectionSize_, entryOffset + entrySize);
     }
 
     // Security: Validate dataSectionSize_ to prevent allocation issues
@@ -86,43 +292,39 @@ bool PackageContainer::Initialize(const std::string& filePath) {
         return false;
     }
     if (dataSectionSize_ > MAX_REASONABLE_DATA_SIZE) {
-        NEXT_LOG_ERROR("Data section size too large: %llu bytes (max: %llu bytes)",
+        NEXT_LOG_ERROR("Data section size too large: %zu bytes (max: %zu bytes)",
                       dataSectionSize_, MAX_REASONABLE_DATA_SIZE);
         return false;
     }
 
-    NEXT_LOG_DEBUG("Package data section size: %llu bytes", dataSectionSize_);
+    NEXT_LOG_DEBUG("Package data section size: %zu bytes", dataSectionSize_);
 
-    // For CP3, we'll read the entire data section into memory
-    // In a real implementation, this would be memory-mapped
-    std::vector<uint8_t> tempData;
+    // For CP3, we read the data section into an owned buffer. A later implementation can swap this for mmap.
     try {
-        tempData.resize(dataSectionSize_);
-    } catch (const std::bad_alloc& e) {
+        mappedFile_ = std::make_unique<MappedFile>();
+        mappedFile_->size = dataSectionSize_;
+        mappedFile_->ownedData = std::make_unique<uint8_t[]>(dataSectionSize_);
+        mappedFile_->data = mappedFile_->ownedData.get();
+    } catch (const std::exception& e) {
         NEXT_LOG_ERROR("Failed to allocate memory for package data: %s", e.what());
+        mappedFile_.reset();
         return false;
     }
 
-    file.seekg(packageHeader_.dataOffset);
-    file.read(reinterpret_cast<char*>(tempData.data()), dataSectionSize_);
-
-    // Validate that the read was successful
-    if (!file) {
+    if (!SeekAbsolute(file, dataOffset) ||
+        !ReadExact(file, mappedFile_->data, dataSectionSize_)) {
         NEXT_LOG_ERROR("Failed to read package data section");
+        mappedFile_.reset();
+        dataSection_ = nullptr;
+        dataSectionSize_ = 0;
         return false;
     }
 
-    // Store in mappedFile_ for simplicity - use vector for automatic cleanup
-    mappedFile_ = std::make_unique<MappedFile>();
-    mappedFile_->size = dataSectionSize_;
-    mappedFile_->ownedData = std::make_unique<uint8_t[]>(dataSectionSize_);
-    mappedFile_->data = mappedFile_->ownedData.get();
-    memcpy(mappedFile_->data, tempData.data(), dataSectionSize_);
     dataSection_ = reinterpret_cast<const uint8_t*>(mappedFile_->data);
     
     file.close();
     
-    NEXT_LOG_INFO("Package loaded successfully: %s with %llu assets", 
+    NEXT_LOG_INFO("Package loaded successfully: %s with %zu assets",
                  name_.c_str(), assetEntries_.size());
     
     return true;
@@ -161,13 +363,49 @@ bool PackageContainer::ReadAssetData(const std::string& assetName, std::vector<u
     
     const AssetEntry& entry = assetEntries_[it->second];
     
-    if (entry.dataOffset + entry.assetSize > dataSectionSize_) {
+    const size_t entryOffset = entry.dataOffset;
+    const size_t entrySize = entry.assetSize;
+    if (entryOffset > dataSectionSize_ || entrySize > dataSectionSize_ - entryOffset) {
         NEXT_LOG_ERROR("Asset data out of bounds: %s", assetName.c_str());
         return false;
     }
     
-    outData.resize(entry.assetSize);
-    memcpy(outData.data(), dataSection_ + entry.dataOffset, entry.assetSize);
+    outData.resize(entrySize);
+    memcpy(outData.data(), dataSection_ + entryOffset, entrySize);
+
+    if (outData.size() < sizeof(AssetHeader)) {
+        NEXT_LOG_ERROR("Asset data too small for header: %s", assetName.c_str());
+        return false;
+    }
+
+    AssetHeader header{};
+    memcpy(&header, outData.data(), sizeof(AssetHeader));
+    if (!header.Validate()) {
+        NEXT_LOG_ERROR("Invalid asset header in package data: %s", assetName.c_str());
+        return false;
+    }
+
+    if (header.assetType != entry.assetType) {
+        NEXT_LOG_ERROR("Asset type mismatch between package index and data: %s", assetName.c_str());
+        return false;
+    }
+
+    if (std::strcmp(header.name, entry.name) != 0) {
+        NEXT_LOG_ERROR("Asset name mismatch between package index and data: %s", assetName.c_str());
+        return false;
+    }
+
+    const size_t payloadOffset = AssetPayloadOffset(header.assetType);
+    if (payloadOffset == 0 ||
+        outData.size() < payloadOffset ||
+        outData.size() - payloadOffset != header.dataSize) {
+        NEXT_LOG_ERROR("Asset payload size mismatch: %s", assetName.c_str());
+        return false;
+    }
+
+    if (header.checksum != 0 && !ValidateAssetChecksum(header, outData.data() + payloadOffset)) {
+        return false;
+    }
     
     NEXT_LOG_DEBUG("Read asset data: %s (%u bytes)", assetName.c_str(), entry.assetSize);
     return true;

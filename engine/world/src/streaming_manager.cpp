@@ -1,4 +1,5 @@
 #include "next/streaming/streaming_manager.h"
+#include "next/streaming/cell_file_format.h"
 #include "next/foundation/logger.h"
 #include "next/runtime/asset/asset_manager.h"
 #include "next/jobsystem/job_system.h"
@@ -6,8 +7,11 @@
 #include <cstddef>
 #include <cmath>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <string>
 #include <unordered_set>
 
 #ifdef _WIN32
@@ -18,6 +22,100 @@ namespace Next {
 namespace Streaming {
 
 namespace {
+
+constexpr size_t kStreamingBytesPerMB = 1024u * 1024u;
+
+std::string PathLogString(const std::filesystem::path& path) {
+    return path.u8string();
+}
+
+std::wstring CellIndexPathString(const std::filesystem::path& path) {
+    std::error_code ec;
+    const std::filesystem::path absolutePath = std::filesystem::absolute(path, ec);
+    return (ec ? path : absolutePath).wstring();
+}
+
+struct CellPayloadInfo {
+    bool valid = false;
+    bool hasHeader = false;
+    CompressionType compression = CompressionType::None;
+    uint64_t payloadOffset = 0;
+    uint64_t payloadSize = 0;
+    uint64_t decompressedSize = 0;
+    std::string error;
+};
+
+CellPayloadInfo InspectCellPayload(const std::vector<uint8_t>& fileData) {
+    CellPayloadInfo info;
+
+    if (fileData.size() < sizeof(uint32_t)) {
+        info.valid = !fileData.empty();
+        info.payloadSize = fileData.size();
+        info.decompressedSize = fileData.size();
+        return info;
+    }
+
+    uint32_t magic = 0;
+    std::memcpy(&magic, fileData.data(), sizeof(magic));
+    if (magic != kCellFileMagic) {
+        info.valid = true;
+        info.payloadSize = fileData.size();
+        info.decompressedSize = fileData.size();
+        return info;
+    }
+
+    info.hasHeader = true;
+    if (fileData.size() < sizeof(CellFileHeader)) {
+        info.error = "cell header is truncated";
+        return info;
+    }
+
+    CellFileHeader header;
+    std::memcpy(&header, fileData.data(), sizeof(header));
+
+    if (header.version != kCellFileVersion) {
+        info.error = "unsupported cell header version";
+        return info;
+    }
+    if (header.headerSize < sizeof(CellFileHeader) || header.headerSize > fileData.size()) {
+        info.error = "invalid cell header size";
+        return info;
+    }
+    if (header.compressedSize == 0 || header.decompressedSize == 0) {
+        info.error = "cell payload size is empty";
+        return info;
+    }
+    if (header.compressedSize > fileData.size() ||
+        static_cast<uint64_t>(header.headerSize) > static_cast<uint64_t>(fileData.size()) - header.compressedSize) {
+        info.error = "cell payload size exceeds file size";
+        return info;
+    }
+    if (static_cast<uint64_t>(header.headerSize) + header.compressedSize != fileData.size()) {
+        info.error = "cell payload size does not match file size";
+        return info;
+    }
+    if (header.decompressedSize > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+        info.error = "cell decompressed payload is too large";
+        return info;
+    }
+
+    if (!IsSupportedCellFileCompression(header.compressionType)) {
+        info.error = "unsupported cell payload compression";
+        return info;
+    }
+    const CompressionType compression = static_cast<CompressionType>(header.compressionType);
+    if (compression == CompressionType::None && header.compressedSize != header.decompressedSize) {
+        info.error = "uncompressed cell payload size mismatch";
+        return info;
+    }
+
+    info.valid = true;
+    info.compression = compression;
+    info.payloadOffset = header.headerSize;
+    info.payloadSize = header.compressedSize;
+    info.decompressedSize = header.decompressedSize;
+    return info;
+}
 
 std::filesystem::path GetExecutableDirectory() {
 #ifdef _WIN32
@@ -46,7 +144,18 @@ void PushUniquePath(std::vector<std::filesystem::path>& roots, const std::filesy
     roots.push_back(path);
 }
 
-std::filesystem::path ResolveRuntimePath(const std::filesystem::path& path) {
+std::filesystem::path NormalizeRuntimePathSeparators(const std::filesystem::path& path) {
+#ifdef _WIN32
+    return path;
+#else
+    std::wstring text = path.wstring();
+    std::replace(text.begin(), text.end(), L'\\', L'/');
+    return std::filesystem::path(text);
+#endif
+}
+
+std::filesystem::path ResolveRuntimePath(const std::filesystem::path& inputPath) {
+    const std::filesystem::path path = NormalizeRuntimePathSeparators(inputPath);
     if (path.empty()) {
         return {};
     }
@@ -87,8 +196,64 @@ std::filesystem::path ResolveRuntimePath(const std::filesystem::path& path) {
     return fallback.empty() ? path : fallback;
 }
 
+bool ComputeStreamingMemoryBudgetBytes(const StreamingManagerConfig& config, size_t& outBytes) {
+    outBytes = 0;
+    if (config.memoryBudgetMB == 0 ||
+        config.memoryBudgetMB > std::numeric_limits<size_t>::max() / kStreamingBytesPerMB) {
+        return false;
+    }
+
+    outBytes = config.memoryBudgetMB * kStreamingBytesPerMB;
+    return true;
+}
+
+bool ValidateStreamingManagerConfig(const StreamingManagerConfig& config, size_t& memoryBudgetBytes) {
+    if (!ComputeStreamingMemoryBudgetBytes(config, memoryBudgetBytes)) {
+        NEXT_LOG_ERROR("Invalid streaming memory budget: %zu MB", config.memoryBudgetMB);
+        return false;
+    }
+    if (config.maxConcurrentLoads == 0 || config.maxConcurrentUnloads == 0) {
+        NEXT_LOG_ERROR("Invalid streaming concurrency limits: loads=%u unloads=%u",
+                       config.maxConcurrentLoads, config.maxConcurrentUnloads);
+        return false;
+    }
+
+    return true;
+}
+
+StreamingManagerConfig ResolveStreamingManagerConfigPaths(const StreamingManagerConfig& config) {
+    StreamingManagerConfig resolved = config;
+    resolved.cellDataDirectory = ResolveRuntimePath(std::filesystem::path(config.cellDataDirectory)).wstring();
+    return resolved;
+}
+
+WorldPartitionConfig MakeWorldPartitionConfig(const StreamingManagerConfig& config) {
+    WorldPartitionConfig partitionConfig;
+    partitionConfig.cellSize = 64.0f;
+    partitionConfig.loadRadius = config.loadRadius;
+    partitionConfig.unloadRadius = config.unloadRadius;
+    partitionConfig.maxLoadedCells = 256;
+    partitionConfig.enableHLOD = config.enableHLOD;
+    return partitionConfig;
+}
+
 std::filesystem::path BuildCellFileName(const CellCoord& coord, const std::wstring& extension) {
     return std::filesystem::path(L"cell_" + std::to_wstring(coord.x) + L"_" + std::to_wstring(coord.z) + extension);
+}
+
+uint32_t CellFileExtensionRank(const std::filesystem::path& path, const std::wstring& preferredExtension) {
+    const std::wstring preferred = preferredExtension.empty() ? L".ncell" : preferredExtension;
+    const std::wstring ext = path.extension().wstring();
+    if (ext == preferred) {
+        return 0;
+    }
+    if (ext == L".ncell") {
+        return 1;
+    }
+    if (ext == L".npkg") {
+        return 2;
+    }
+    return std::numeric_limits<uint32_t>::max();
 }
 
 std::filesystem::path ResolveCellFilePath(const std::filesystem::path& root,
@@ -130,6 +295,24 @@ bool IsPackageCellPath(const std::filesystem::path& path) {
     return path.extension() == ".npkg";
 }
 
+StreamingCellInfo MakeStreamingCellInfo(const CellData& cell) {
+    StreamingCellInfo info;
+    info.coord = cell.coord;
+    info.worldPosition = cell.metadata.worldPosition;
+    info.cellSize = cell.metadata.cellSize;
+    info.state = cell.state;
+    info.layerMask = cell.metadata.layerMask;
+    info.layerCount = cell.LayerCount();
+    info.loadedLayerCount = cell.LoadedLayerCount();
+    info.dataSize = cell.DiskDataSize();
+    info.memorySize = cell.MemorySize();
+    info.priority = cell.priority;
+    info.lastAccessFrame = cell.lastAccessFrame;
+    info.asyncOperationHandle = cell.asyncOperationHandle;
+    info.placeholder = cell.IsPlaceholder();
+    return info;
+}
+
 } // namespace
 
 // ===== Streaming Manager Implementation =====
@@ -151,17 +334,16 @@ bool StreamingManager::Initialize(const StreamingManagerConfig& config) {
         return true;
     }
 
-    config_ = config;
-    config_.cellDataDirectory = ResolveRuntimePath(std::filesystem::path(config.cellDataDirectory)).wstring();
+    size_t memoryBudgetBytes = 0;
+    if (!ValidateStreamingManagerConfig(config, memoryBudgetBytes)) {
+        return false;
+    }
+
+    config_ = ResolveStreamingManagerConfigPaths(config);
 
     // Initialize sub-systems
     worldPartition_ = std::make_unique<WorldPartition>();
-    WorldPartitionConfig partitionConfig;
-    partitionConfig.cellSize = 64.0f;  // Default cell size
-    partitionConfig.loadRadius = config.loadRadius;
-    partitionConfig.unloadRadius = config.unloadRadius;
-    partitionConfig.maxLoadedCells = 256;  // Default
-    partitionConfig.enableHLOD = config.enableHLOD;
+    const WorldPartitionConfig partitionConfig = MakeWorldPartitionConfig(config_);
     if (!worldPartition_->Initialize(partitionConfig)) {
         NEXT_LOG_ERROR("Failed to initialize WorldPartition");
         return false;
@@ -185,17 +367,19 @@ bool StreamingManager::Initialize(const StreamingManagerConfig& config) {
         NEXT_LOG_ERROR("Failed to initialize LODSystem");
         return false;
     }
+    // Keep cell sizing consistent across LOD/cluster math and the partition.
+    lodSystem_->SetCellSize(partitionConfig.cellSize);
 
     evictionPolicy_ = std::make_unique<EvictionPolicy>();
     if (!evictionPolicy_->Initialize(EvictionPolicyConfig())) {
         NEXT_LOG_ERROR("Failed to initialize EvictionPolicy");
         return false;
     }
-    evictionPolicy_->SetMemoryBudget(config.memoryBudgetMB * 1024 * 1024);
+    evictionPolicy_->SetMemoryBudget(memoryBudgetBytes);
     evictionPolicy_->SetMaxCellCount(static_cast<uint32_t>(partitionConfig.maxLoadedCells));
 
     memoryPool_ = std::make_unique<StreamingMemoryPool>();
-    if (!memoryPool_->Initialize(config.memoryBudgetMB * 1024 * 1024)) {
+    if (!memoryPool_->Initialize(memoryBudgetBytes)) {
         NEXT_LOG_ERROR("Failed to initialize StreamingMemoryPool");
         return false;
     }
@@ -224,9 +408,11 @@ bool StreamingManager::Initialize(const StreamingManagerConfig& config) {
 
 void StreamingManager::ScanAvailableCells() {
     availableCells_.clear();
+    availableCellPaths_.clear();
 
     const std::filesystem::path root(config_.cellDataDirectory);
-    if (root.empty() || !std::filesystem::exists(root)) {
+    std::error_code ec;
+    if (root.empty() || !std::filesystem::exists(root, ec) || !std::filesystem::is_directory(root, ec)) {
         return;
     }
 
@@ -254,20 +440,30 @@ void StreamingManager::ScanAvailableCells() {
         return true;
     };
 
-    // Flat scan for bring-up. Production can switch to a prebuilt index file for faster startup.
-    for (const auto& entry : std::filesystem::directory_iterator(root)) {
-        if (!entry.is_regular_file()) {
+    std::filesystem::recursive_directory_iterator it(
+        root,
+        std::filesystem::directory_options::skip_permission_denied,
+        ec);
+    const std::filesystem::recursive_directory_iterator end;
+    for (; !ec && it != end; it.increment(ec)) {
+        const auto& entry = *it;
+        std::error_code entryEc;
+        if (!entry.is_regular_file(entryEc)) {
             continue;
         }
         const std::filesystem::path p = entry.path();
-        const std::wstring ext = p.extension().wstring();
-        if (ext != want && ext != L".ncell" && ext != L".npkg") {
+        if (CellFileExtensionRank(p, want) == std::numeric_limits<uint32_t>::max()) {
             continue;
         }
 
         CellCoord c;
         if (tryParseCell(p, c)) {
             availableCells_.insert(c);
+            auto existing = availableCellPaths_.find(c);
+            if (existing == availableCellPaths_.end() ||
+                CellFileExtensionRank(p, want) < CellFileExtensionRank(std::filesystem::path(existing->second), want)) {
+                availableCellPaths_[c] = CellIndexPathString(p);
+            }
         }
     }
 }
@@ -289,7 +485,20 @@ void StreamingManager::Update(float deltaTime, const Vec3& cameraPosition, const
     // Keep InterestManager in sync so priority/interest calculations can work off camera state.
     interestManager_->SetCameraPosition(cameraPosition, cameraDirection, cameraVelocity);
     interestManager_->Update(deltaTime);
-    lodSystem_->Update(deltaTime, cameraPosition, Mat4::Identity());  // TODO: Pass actual view-projection matrix
+    {
+        // Build a view-projection from camera state and config-supplied lens
+        // parameters so LOD screen-size selection runs against a real matrix.
+        const Vec3 target = cameraPosition + cameraDirection;
+        const Vec3 up(0.0f, 1.0f, 0.0f);
+        const Mat4 view = Mat4::LookAt(cameraPosition, target, up);
+        const Mat4 projection = Mat4::Perspective(
+            config_.cameraFovRadians,
+            config_.cameraAspectRatio,
+            config_.cameraNearPlane,
+            config_.cameraFarPlane);
+        const Mat4 viewProjection = projection * view;
+        lodSystem_->Update(deltaTime, cameraPosition, viewProjection);
+    }
     evictionPolicy_->Update(deltaTime, cameraPosition, currentFrame_);
 
     asyncIO_->Update();
@@ -403,9 +612,11 @@ void StreamingManager::ProcessCellOpCompletions() {
             ld.state = CellLoadState::Loaded;
             cell->layers[CellLayer::StaticMesh] = ld;
 
+            const uint64_t diskBytes = c.diskBytes != 0 ? c.diskBytes : c.bytes;
             cell->isPlaceholderData = false;
-            cell->metadata.dataSize = c.bytes;
-            cell->metadata.memorySize = c.bytes; // approximate: package runtime memory ~= on-disk size (placeholder)
+            cell->metadata.dataSize = diskBytes;
+            cell->metadata.memorySize = c.bytes; // approximate for package-backed cells
+            cell->metadata.SetLayerPresent(CellLayer::StaticMesh);
             worldPartition_->UpdateCellState(c.coord, CellLoadState::Loaded);
             evictionPolicy_->RecordAccess(c.coord, currentFrame_);
         } else {
@@ -466,15 +677,51 @@ void StreamingManager::ReloadCell(const CellCoord& coord) {
 }
 
 bool StreamingManager::IsCellLoaded(const CellCoord& coord) const {
-    return worldPartition_->IsCellLoaded(coord);
+    return worldPartition_ ? worldPartition_->IsCellLoaded(coord) : false;
 }
 
 CellData* StreamingManager::GetCell(const CellCoord& coord) {
-    return worldPartition_->GetCell(coord);
+    return worldPartition_ ? worldPartition_->GetCell(coord) : nullptr;
+}
+
+const CellData* StreamingManager::GetCell(const CellCoord& coord) const {
+    return worldPartition_ ? worldPartition_->GetCell(coord) : nullptr;
+}
+
+bool StreamingManager::GetCellInfo(const CellCoord& coord, StreamingCellInfo& outInfo) const {
+    outInfo = {};
+    if (!worldPartition_) {
+        return false;
+    }
+
+    const CellData* cell = worldPartition_->GetCell(coord);
+    if (!cell) {
+        return false;
+    }
+
+    outInfo = MakeStreamingCellInfo(*cell);
+    return true;
 }
 
 std::vector<CellCoord> StreamingManager::GetLoadedCells() const {
-    return worldPartition_->GetLoadedCells();
+    return worldPartition_ ? worldPartition_->GetLoadedCells() : std::vector<CellCoord>();
+}
+
+std::vector<StreamingCellInfo> StreamingManager::GetLoadedCellInfos() const {
+    std::vector<StreamingCellInfo> infos;
+    if (!worldPartition_) {
+        return infos;
+    }
+
+    const std::vector<CellCoord> loadedCells = worldPartition_->GetLoadedCells();
+    infos.reserve(loadedCells.size());
+    for (const CellCoord& coord : loadedCells) {
+        const CellData* cell = worldPartition_->GetCell(coord);
+        if (cell) {
+            infos.push_back(MakeStreamingCellInfo(*cell));
+        }
+    }
+    return infos;
 }
 
 std::vector<CellCoord> StreamingManager::GetCellsInRange(const Vec3& position, float radius) const {
@@ -500,6 +747,7 @@ std::vector<CellCoord> StreamingManager::GetCellsInRange(const Vec3& position, f
     }
 
     const float radiusSq = radius * radius;
+    const bool hasAvailableCellIndex = !availableCells_.empty() || !bundleAvailableCells_.empty();
     for (int32_t x = minX; x <= maxX; ++x) {
         for (int32_t z = minZ; z <= maxZ; ++z) {
             CellCoord coord{x, z};
@@ -507,8 +755,9 @@ std::vector<CellCoord> StreamingManager::GetCellsInRange(const Vec3& position, f
             Vec3 toCell = cellCenter - position;
             if (toCell.Dot(toCell) <= radiusSq) {
                 if (!config_.allowPlaceholderCellLoad &&
-                    !availableCells_.empty() &&
-                    availableCells_.find(coord) == availableCells_.end()) {
+                    hasAvailableCellIndex &&
+                    availableCells_.find(coord) == availableCells_.end() &&
+                    bundleAvailableCells_.find(coord) == bundleAvailableCells_.end()) {
                     continue;
                 }
                 cells.push_back(coord);
@@ -525,8 +774,9 @@ StreamingHandle StreamingManager::LoadAssetBundle(const std::wstring& bundlePath
     }
 
     std::filesystem::path p(bundlePath);
+    const std::string bundlePathForLog = PathLogString(p);
     if (!std::filesystem::exists(p)) {
-        NEXT_LOG_ERROR("LoadAssetBundle: path does not exist: %S", bundlePath.c_str());
+        NEXT_LOG_ERROR("LoadAssetBundle: path does not exist: %s", bundlePathForLog.c_str());
         return StreamingHandle{0};
     }
 
@@ -563,51 +813,78 @@ StreamingHandle StreamingManager::LoadAssetBundle(const std::wstring& bundlePath
     bundle.totalSize = 0;
     bundle.compressedSize = 0;
 
-    if (std::filesystem::is_directory(p)) {
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(p)) {
-            if (!entry.is_regular_file()) {
-                continue;
-            }
-            const std::wstring ext = entry.path().extension().wstring();
-            const std::wstring want = config_.cellFileExtension.empty() ? L".ncell" : config_.cellFileExtension;
-            if (ext != want && ext != L".ncell" && ext != L".npkg") {
-                continue;
-            }
+    const std::wstring want = config_.cellFileExtension.empty() ? L".ncell" : config_.cellFileExtension;
+    std::unordered_map<CellCoord, std::wstring, CellCoord::Hash> discoveredCellPaths;
+    std::unordered_map<CellCoord, uint64_t, CellCoord::Hash> discoveredCellSizes;
 
-            CellCoord c;
-            if (!tryParseCell(entry.path(), c)) {
-                continue;
-            }
+    auto recordBundleCell = [&](const std::filesystem::path& file) {
+        if (CellFileExtensionRank(file, want) == std::numeric_limits<uint32_t>::max()) {
+            return;
+        }
 
+        CellCoord c;
+        if (!tryParseCell(file, c)) {
+            return;
+        }
+
+        uint64_t fileSize = 0;
+        std::error_code fileSizeEc;
+        fileSize = static_cast<uint64_t>(std::filesystem::file_size(file, fileSizeEc));
+        if (fileSizeEc) {
+            fileSize = 0;
+        }
+
+        auto existing = discoveredCellPaths.find(c);
+        if (existing != discoveredCellPaths.end()) {
+            if (CellFileExtensionRank(file, want) >=
+                CellFileExtensionRank(std::filesystem::path(existing->second), want)) {
+                return;
+            }
+            bundle.totalSize -= discoveredCellSizes[c];
+        } else {
             bundle.cells.push_back(c);
-            try {
-                bundle.totalSize += static_cast<uint64_t>(entry.file_size());
-            } catch (...) {
+        }
+
+        discoveredCellPaths[c] = CellIndexPathString(file);
+        discoveredCellSizes[c] = fileSize;
+        bundle.totalSize += fileSize;
+    };
+
+    std::error_code pathEc;
+    if (std::filesystem::is_directory(p, pathEc)) {
+        std::filesystem::recursive_directory_iterator it(
+            p,
+            std::filesystem::directory_options::skip_permission_denied,
+            pathEc);
+        const std::filesystem::recursive_directory_iterator end;
+        for (; !pathEc && it != end; it.increment(pathEc)) {
+            const auto& entry = *it;
+            std::error_code entryEc;
+            if (!entry.is_regular_file(entryEc)) {
+                continue;
             }
+            recordBundleCell(entry.path());
         }
     } else {
-        const std::wstring ext = p.extension().wstring();
-        const std::wstring want = config_.cellFileExtension.empty() ? L".ncell" : config_.cellFileExtension;
-        if (ext == want || ext == L".ncell" || ext == L".npkg") {
-            CellCoord c;
-            if (tryParseCell(p, c)) {
-                bundle.cells.push_back(c);
-                try {
-                    bundle.totalSize += static_cast<uint64_t>(std::filesystem::file_size(p));
-                } catch (...) {
-                }
-            }
-        }
+        recordBundleCell(p);
     }
 
     if (bundle.cells.empty()) {
-        NEXT_LOG_WARNING("LoadAssetBundle: no cells found under %S", bundlePath.c_str());
+        NEXT_LOG_WARNING("LoadAssetBundle: no cells found under %s", bundlePathForLog.c_str());
     }
 
     const uint64_t id = bundle.bundleId;
     assetBundles_[id] = bundle;
+    bundleCellPathIndex_[id] = std::move(discoveredCellPaths);
+    const auto& bundleCellPaths = bundleCellPathIndex_[id];
     for (const CellCoord& c : assetBundles_[id].cells) {
         cellToBundle_[c] = id;
+        auto pathIt = bundleCellPaths.find(c);
+        if (pathIt != bundleCellPaths.end()) {
+            bundleAvailableCells_.insert(c);
+            bundleCellPaths_[c] = pathIt->second;
+            bundleCellPathOwners_[c] = id;
+        }
         LoadCell(c, 1.0f);
     }
 
@@ -624,14 +901,78 @@ void StreamingManager::UnloadAssetBundle(StreamingHandle handle) {
         return;
     }
 
+    auto findReplacementBundle = [this, bundleId = handle.id](const CellCoord& coord,
+                                                              uint64_t& replacementId,
+                                                              std::wstring& replacementPath) {
+        replacementId = 0;
+        replacementPath.clear();
+
+        for (const auto& [otherId, otherBundle] : assetBundles_) {
+            if (otherId == bundleId) {
+                continue;
+            }
+            if (std::find(otherBundle.cells.begin(), otherBundle.cells.end(), coord) == otherBundle.cells.end()) {
+                continue;
+            }
+            if (otherId < replacementId) {
+                continue;
+            }
+            replacementId = otherId;
+        }
+
+        if (replacementId == 0) {
+            return false;
+        }
+
+        auto bundlePathsIt = bundleCellPathIndex_.find(replacementId);
+        if (bundlePathsIt != bundleCellPathIndex_.end()) {
+            auto pathIt = bundlePathsIt->second.find(coord);
+            if (pathIt != bundlePathsIt->second.end()) {
+                replacementPath = pathIt->second;
+            }
+        }
+        return true;
+    };
+
     for (const CellCoord& c : it->second.cells) {
+        uint64_t replacementId = 0;
+        std::wstring replacementPath;
+        const bool stillReferenced = findReplacementBundle(c, replacementId, replacementPath);
+
         auto mapIt = cellToBundle_.find(c);
+        if (stillReferenced) {
+            if (mapIt == cellToBundle_.end() || mapIt->second == handle.id) {
+                cellToBundle_[c] = replacementId;
+            }
+
+            auto ownerIt = bundleCellPathOwners_.find(c);
+            if (ownerIt == bundleCellPathOwners_.end() || ownerIt->second == handle.id) {
+                if (!replacementPath.empty()) {
+                    bundleAvailableCells_.insert(c);
+                    bundleCellPaths_[c] = replacementPath;
+                    bundleCellPathOwners_[c] = replacementId;
+                } else {
+                    bundleCellPathOwners_.erase(c);
+                    bundleCellPaths_.erase(c);
+                    bundleAvailableCells_.erase(c);
+                }
+            }
+            continue;
+        }
+
         if (mapIt != cellToBundle_.end() && mapIt->second == handle.id) {
             cellToBundle_.erase(mapIt);
+        }
+        auto ownerIt = bundleCellPathOwners_.find(c);
+        if (ownerIt != bundleCellPathOwners_.end() && ownerIt->second == handle.id) {
+            bundleCellPathOwners_.erase(ownerIt);
+            bundleCellPaths_.erase(c);
+            bundleAvailableCells_.erase(c);
         }
         UnloadCell(c);
     }
 
+    bundleCellPathIndex_.erase(handle.id);
     assetBundles_.erase(it);
 }
 
@@ -640,6 +981,21 @@ bool StreamingManager::IsAssetBundleLoaded(StreamingHandle handle) const {
         return false;
     }
     return assetBundles_.find(handle.id) != assetBundles_.end();
+}
+
+bool StreamingManager::GetAssetBundleInfo(StreamingHandle handle, AssetBundle& outBundle) const {
+    outBundle = {};
+    if (!handle) {
+        return false;
+    }
+
+    auto it = assetBundles_.find(handle.id);
+    if (it == assetBundles_.end()) {
+        return false;
+    }
+
+    outBundle = it->second;
+    return true;
 }
 
 void StreamingManager::LoadCellLayer(const CellCoord& coord, CellLayer layer, float priority) {
@@ -680,6 +1036,7 @@ void StreamingManager::LoadCellLayer(const CellCoord& coord, CellLayer layer, fl
     ld.size = 0;
     ld.state = CellLoadState::Loaded;
     cell->layers[layer] = ld;
+    cell->metadata.SetLayerPresent(layer);
     cell->isPlaceholderData = true;
 }
 
@@ -702,6 +1059,7 @@ void StreamingManager::UnloadCellLayer(const CellCoord& coord, CellLayer layer) 
         memoryPool_->Free(it->second.data);
     }
     cell->layers.erase(it);
+    cell->metadata.SetLayerPresent(layer, false);
 }
 
 void StreamingManager::ReleaseCellLayers(CellData* cell) {
@@ -720,10 +1078,11 @@ void StreamingManager::ReleaseCellLayers(CellData* cell) {
     }
 
     cell->layers.clear();
+    cell->metadata.layerMask = 0;
 }
 
 bool StreamingManager::IsCellLayerLoaded(const CellCoord& coord, CellLayer layer) const {
-    const CellData* cell = worldPartition_->GetCell(coord);
+    const CellData* cell = worldPartition_ ? worldPartition_->GetCell(coord) : nullptr;
     if (cell) {
         return cell->IsLayerLoaded(layer);
     }
@@ -731,10 +1090,16 @@ bool StreamingManager::IsCellLayerLoaded(const CellCoord& coord, CellLayer layer
 }
 
 void StreamingManager::SetCellPriority(const CellCoord& coord, float priority) {
-    evictionPolicy_->SetCellPriority(coord, priority);
+    if (evictionPolicy_) {
+        evictionPolicy_->SetCellPriority(coord, priority);
+    }
 }
 
 void StreamingManager::BoostCellPriority(const CellCoord& coord, float boost) {
+    if (!evictionPolicy_) {
+        return;
+    }
+
     float currentPriority = evictionPolicy_->GetCellPriority(coord);
     evictionPolicy_->SetCellPriority(coord, currentPriority + boost);
 }
@@ -744,24 +1109,55 @@ void StreamingManager::SetGlobalPriorityOverride(std::function<float(const CellC
 }
 
 void StreamingManager::SetConfig(const StreamingManagerConfig& config) {
-    config_ = config;
-    config_.cellDataDirectory = ResolveRuntimePath(std::filesystem::path(config.cellDataDirectory)).wstring();
+    size_t memoryBudgetBytes = 0;
+    if (!ValidateStreamingManagerConfig(config, memoryBudgetBytes)) {
+        return;
+    }
+
+    config_ = ResolveStreamingManagerConfigPaths(config);
+    if (!initialized_) {
+        return;
+    }
 
     // Update sub-system configs
-    WorldPartitionConfig partitionConfig;
-    partitionConfig.cellSize = 64.0f;
-    partitionConfig.loadRadius = config.loadRadius;
-    partitionConfig.unloadRadius = config.unloadRadius;
-    partitionConfig.maxLoadedCells = 256;
-    partitionConfig.enableHLOD = config.enableHLOD;
-    worldPartition_->SetConfig(partitionConfig);
+    const WorldPartitionConfig partitionConfig = MakeWorldPartitionConfig(config_);
+    if (worldPartition_) {
+        worldPartition_->SetConfig(partitionConfig);
+    }
 
-    lodSystem_->SetConfig(LODSystemConfig());
-    evictionPolicy_->SetConfig(EvictionPolicyConfig());
+    if (lodSystem_) {
+        lodSystem_->SetConfig(LODSystemConfig());
+    }
+    if (evictionPolicy_) {
+        evictionPolicy_->SetConfig(EvictionPolicyConfig());
+        evictionPolicy_->SetMemoryBudget(memoryBudgetBytes);
+        evictionPolicy_->SetMaxCellCount(static_cast<uint32_t>(partitionConfig.maxLoadedCells));
+    }
+    ScanAvailableCells();
 }
 
 StreamingStatistics StreamingManager::GetStatistics() const {
     return stats_;
+}
+
+WorldPartition::Statistics StreamingManager::GetWorldPartitionStatistics() const {
+    return worldPartition_ ? worldPartition_->GetStatistics() : WorldPartition::Statistics();
+}
+
+InterestManager::Statistics StreamingManager::GetInterestStatistics() const {
+    return interestManager_ ? interestManager_->GetStatistics() : InterestManager::Statistics();
+}
+
+IOStatistics StreamingManager::GetIOStatistics() const {
+    return asyncIO_ ? asyncIO_->GetStatistics() : IOStatistics();
+}
+
+LODSystem::Statistics StreamingManager::GetLODStatistics() const {
+    return lodSystem_ ? lodSystem_->GetStatistics() : LODSystem::Statistics();
+}
+
+EvictionPolicy::Statistics StreamingManager::GetEvictionStatistics() const {
+    return evictionPolicy_ ? evictionPolicy_->GetStatistics() : EvictionPolicy::Statistics();
 }
 
 void StreamingManager::ResetStatistics() {
@@ -769,13 +1165,17 @@ void StreamingManager::ResetStatistics() {
 }
 
 size_t StreamingManager::GetMemoryUsage() const {
+    if (!worldPartition_) {
+        return 0;
+    }
+
     size_t usage = 0;
 
     auto loadedCells = worldPartition_->GetLoadedCells();
     for (const CellCoord& coord : loadedCells) {
         const CellData* cell = worldPartition_->GetCell(coord);
         if (cell) {
-            usage += cell->metadata.memorySize;
+            usage += cell->MemorySize();
         }
     }
 
@@ -783,7 +1183,11 @@ size_t StreamingManager::GetMemoryUsage() const {
 }
 
 size_t StreamingManager::GetMemoryBudget() const {
-    return config_.memoryBudgetMB * 1024 * 1024;
+    size_t memoryBudgetBytes = 0;
+    if (!ComputeStreamingMemoryBudgetBytes(config_, memoryBudgetBytes)) {
+        return 0;
+    }
+    return memoryBudgetBytes;
 }
 
 float StreamingManager::GetMemoryUtilization() const {
@@ -804,8 +1208,13 @@ void StreamingManager::UnloadAll() {
     for (const CellCoord& coord : loadedCells) {
         UnloadCell(coord);
     }
+    std::vector<CellCoord> activeLoads;
+    activeLoads.reserve(activeLoadOperations_.size());
     for (const auto& [coord, op] : activeLoadOperations_) {
         (void)op;
+        activeLoads.push_back(coord);
+    }
+    for (const CellCoord& coord : activeLoads) {
         UnloadCell(coord);
     }
 
@@ -870,6 +1279,12 @@ void StreamingManager::Shutdown() {
     cellToPackageName_.clear();
     cellToBundle_.clear();
     assetBundles_.clear();
+    availableCellPaths_.clear();
+    availableCells_.clear();
+    bundleCellPathIndex_.clear();
+    bundleCellPathOwners_.clear();
+    bundleCellPaths_.clear();
+    bundleAvailableCells_.clear();
     {
         std::lock_guard<std::mutex> lock(completionMutex_);
         completions_.clear();
@@ -1099,11 +1514,12 @@ void StreamingManager::ProcessCellLoad(const CellLoadRequest& request) {
     // Determine file path.
     const std::wstring filePath = GetCellFilePath(request.coord);
     const std::filesystem::path fsPath(filePath);
+    const std::string filePathForLog = PathLogString(fsPath);
 
     // Missing data: allow placeholder to keep demo running.
     if (!std::filesystem::exists(fsPath)) {
         if (!config_.allowPlaceholderCellLoad) {
-            NEXT_LOG_ERROR("Missing cell file: %S", filePath.c_str());
+            NEXT_LOG_ERROR("Missing cell file: %s", filePathForLog.c_str());
             worldPartition_->UpdateCellState(request.coord, CellLoadState::Error);
             stats_.failedLoads++;
             return;
@@ -1116,8 +1532,8 @@ void StreamingManager::ProcessCellLoad(const CellLoadRequest& request) {
         cell->metadata.dataSize = config_.placeholderCellSizeBytes;
         worldPartition_->UpdateCellState(request.coord, CellLoadState::Loaded);
         evictionPolicy_->RecordAccess(request.coord, currentFrame_);
-        NEXT_LOG_WARNING("Loaded placeholder cell for (%d,%d) because '%S' was missing",
-                         request.coord.x, request.coord.z, filePath.c_str());
+        NEXT_LOG_WARNING("Loaded placeholder cell for (%d,%d) because '%s' was missing",
+                         request.coord.x, request.coord.z, filePathForLog.c_str());
         return;
     }
 
@@ -1129,7 +1545,7 @@ void StreamingManager::ProcessCellLoad(const CellLoadRequest& request) {
     }
 
     if (fileSize == 0) {
-        NEXT_LOG_ERROR("Cell file is empty/unreadable: %S", filePath.c_str());
+        NEXT_LOG_ERROR("Cell file is empty/unreadable: %s", filePathForLog.c_str());
         worldPartition_->UpdateCellState(request.coord, CellLoadState::Error);
         stats_.failedLoads++;
         return;
@@ -1147,6 +1563,190 @@ void StreamingManager::ProcessCellLoad(const CellLoadRequest& request) {
     op.fileBytes = fileSize;
     op.packageBacked = packageBacked;
 
+    if (!packageBacked) {
+        if (fileSize > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+            NEXT_LOG_ERROR("Cell file is too large to load on this platform: %s", filePathForLog.c_str());
+            worldPartition_->UpdateCellState(request.coord, CellLoadState::Error);
+            stats_.failedLoads++;
+            return;
+        }
+
+        size_t memoryBudgetBytes = 0;
+        if (!ComputeStreamingMemoryBudgetBytes(config_, memoryBudgetBytes)) {
+            NEXT_LOG_ERROR("Invalid streaming memory budget while loading cell: %zu MB", config_.memoryBudgetMB);
+            worldPartition_->UpdateCellState(request.coord, CellLoadState::Error);
+            stats_.failedLoads++;
+            return;
+        }
+        const uint64_t rawCellPayloadBudgetBytes = static_cast<uint64_t>(memoryBudgetBytes);
+        if (fileSize > rawCellPayloadBudgetBytes) {
+            NEXT_LOG_ERROR("Cell file exceeds streaming memory budget: %s (%llu bytes > %llu bytes)",
+                           filePathForLog.c_str(),
+                           static_cast<unsigned long long>(fileSize),
+                           static_cast<unsigned long long>(rawCellPayloadBudgetBytes));
+            worldPartition_->UpdateCellState(request.coord, CellLoadState::Error);
+            stats_.failedLoads++;
+            return;
+        }
+
+        try {
+            op.rawReadBuffer.resize(static_cast<size_t>(fileSize));
+        } catch (const std::exception& e) {
+            NEXT_LOG_ERROR("Failed to allocate cell read buffer for %s: %s", filePathForLog.c_str(), e.what());
+            worldPartition_->UpdateCellState(request.coord, CellLoadState::Error);
+            stats_.failedLoads++;
+            return;
+        }
+        void* readBuffer = op.rawReadBuffer.data();
+        const CellCoord coord = request.coord;
+        const uint32_t ioPriority = request.priority >= 1.0f
+            ? 0u
+            : static_cast<uint32_t>((1.0f - std::max(0.0f, request.priority)) * 1000.0f);
+        const uint64_t asyncRequestId = asyncIO_ ? asyncIO_->SubmitReadRequest(
+            filePath,
+            0,
+            fileSize,
+            readBuffer,
+            CompressionType::None,
+            [this, coord, fileSize, rawCellPayloadBudgetBytes, ioPriority](bool success, uint64_t bytesProcessed) {
+                auto pushCompletion = [this](CellOpCompletion completion) {
+                    std::lock_guard<std::mutex> lock(completionMutex_);
+                    completions_.push_back(std::move(completion));
+                };
+
+                CellOpCompletion c;
+                c.coord = coord;
+                c.isLoad = true;
+                c.packageBacked = false;
+                c.diskBytes = fileSize;
+                c.bytes = bytesProcessed;
+                c.success = success && bytesProcessed == fileSize;
+
+                auto it = activeLoadOperations_.find(coord);
+                if (!c.success) {
+                    c.error = "AsyncIO read failed";
+                    pushCompletion(std::move(c));
+                    return;
+                }
+                if (it == activeLoadOperations_.end()) {
+                    c.success = false;
+                    c.error = "AsyncIO read completed after active load was removed";
+                    pushCompletion(std::move(c));
+                    return;
+                }
+
+                ActiveCellOp& active = it->second;
+                const CellPayloadInfo payload = InspectCellPayload(active.rawReadBuffer);
+                if (!payload.valid) {
+                    c.success = false;
+                    c.error = payload.error.empty() ? "Invalid cell payload" : payload.error;
+                    pushCompletion(std::move(c));
+                    return;
+                }
+
+                if (payload.decompressedSize > rawCellPayloadBudgetBytes) {
+                    c.success = false;
+                    c.bytes = 0;
+                    c.error = "Cell payload exceeds streaming memory budget";
+                    pushCompletion(std::move(c));
+                    return;
+                }
+
+                if (payload.compression == CompressionType::None) {
+                    c.bytes = payload.decompressedSize;
+                    const size_t payloadOffset = static_cast<size_t>(payload.payloadOffset);
+                    const size_t payloadSize = static_cast<size_t>(payload.payloadSize);
+                    try {
+                        if (payloadOffset == 0 && payloadSize == active.rawReadBuffer.size()) {
+                            c.rawCellData = std::move(active.rawReadBuffer);
+                        } else {
+                            const uint8_t* payloadBegin = active.rawReadBuffer.data() + payloadOffset;
+                            c.rawCellData.assign(payloadBegin, payloadBegin + payloadSize);
+                        }
+                    } catch (const std::exception& e) {
+                        c.success = false;
+                        c.bytes = 0;
+                        c.rawCellData.clear();
+                        c.error = std::string("Failed to allocate cell payload buffer: ") + e.what();
+                    }
+                    pushCompletion(std::move(c));
+                    return;
+                }
+
+                try {
+                    active.rawDecompressedBuffer.resize(static_cast<size_t>(payload.decompressedSize));
+                } catch (const std::exception& e) {
+                    c.success = false;
+                    c.bytes = 0;
+                    c.error = std::string("Failed to allocate cell decompression buffer: ") + e.what();
+                    pushCompletion(std::move(c));
+                    return;
+                }
+                active.decompressedBytes = payload.decompressedSize;
+                active.compressionType = payload.compression;
+
+                if (worldPartition_ && worldPartition_->GetCell(coord)) {
+                    worldPartition_->UpdateCellState(coord, CellLoadState::Decompressing);
+                }
+
+                const size_t payloadOffset = static_cast<size_t>(payload.payloadOffset);
+                const void* compressedInput = active.rawReadBuffer.data() + payloadOffset;
+                void* decompressedOutput = active.rawDecompressedBuffer.data();
+                const uint64_t expectedBytes = payload.decompressedSize;
+                const uint64_t decompressRequestId = asyncIO_ ? asyncIO_->SubmitDecompressRequest(
+                    compressedInput,
+                    payload.payloadSize,
+                    decompressedOutput,
+                    payload.decompressedSize,
+                    payload.compression,
+                    [this, coord, fileSize, expectedBytes](bool decompressSuccess, uint64_t decompressedBytes) {
+                        CellOpCompletion dc;
+                        dc.coord = coord;
+                        dc.isLoad = true;
+                        dc.packageBacked = false;
+                        dc.diskBytes = fileSize;
+                        dc.bytes = decompressedBytes;
+                        dc.success = decompressSuccess && decompressedBytes == expectedBytes;
+
+                        auto activeIt = activeLoadOperations_.find(coord);
+                        if (dc.success && activeIt != activeLoadOperations_.end()) {
+                            dc.rawCellData = std::move(activeIt->second.rawDecompressedBuffer);
+                        } else if (!dc.success) {
+                            dc.error = "AsyncIO decompression failed";
+                        } else {
+                            dc.success = false;
+                            dc.error = "AsyncIO decompression completed after active load was removed";
+                        }
+
+                        std::lock_guard<std::mutex> lock(completionMutex_);
+                        completions_.push_back(std::move(dc));
+                    },
+                    ioPriority) : 0;
+
+                if (decompressRequestId == 0) {
+                    c.success = false;
+                    c.bytes = 0;
+                    c.error = "Failed to submit async cell decompression";
+                    pushCompletion(std::move(c));
+                    return;
+                }
+
+                active.asyncRequestId = decompressRequestId;
+            },
+            ioPriority) : 0;
+
+        if (asyncRequestId == 0) {
+            NEXT_LOG_ERROR("Failed to submit async cell read: %s", filePathForLog.c_str());
+            worldPartition_->UpdateCellState(request.coord, CellLoadState::Error);
+            stats_.failedLoads++;
+            return;
+        }
+
+        op.asyncRequestId = asyncRequestId;
+        activeLoadOperations_[request.coord] = std::move(op);
+        return;
+    }
+
     auto& js = Next::JobSystem::Instance();
     op.job = js.Submit([this, coord = request.coord, pkgName, pkgPath, filePath, fileSize, packageBacked]() {
         CellOpCompletion c;
@@ -1155,6 +1755,7 @@ void StreamingManager::ProcessCellLoad(const CellLoadRequest& request) {
         c.packageBacked = packageBacked;
         c.packageName = pkgName;
         c.bytes = fileSize;
+        c.diskBytes = fileSize;
 
         if (packageBacked) {
             c.success = Next::AssetManager::Instance().LoadPackage(pkgPath);
@@ -1192,8 +1793,13 @@ void StreamingManager::ProcessCellUnload(const CellUnloadRequest& request) {
 
     // Cancel in-flight load (best-effort).
     auto itLoad = activeLoadOperations_.find(request.coord);
-    if (itLoad != activeLoadOperations_.end() && itLoad->second.job.IsValid()) {
-        Next::JobSystem::Instance().Cancel(itLoad->second.job);
+    if (itLoad != activeLoadOperations_.end()) {
+        if (itLoad->second.asyncRequestId != 0 && asyncIO_) {
+            asyncIO_->CancelRequest(itLoad->second.asyncRequestId);
+        }
+        if (itLoad->second.job.IsValid()) {
+            Next::JobSystem::Instance().Cancel(itLoad->second.job);
+        }
         activeLoadOperations_.erase(itLoad);
     }
 
@@ -1226,6 +1832,16 @@ void StreamingManager::ProcessCellUnload(const CellUnloadRequest& request) {
 }
 
 std::wstring StreamingManager::GetCellFilePath(const CellCoord& coord) const {
+    auto bundlePath = bundleCellPaths_.find(coord);
+    if (bundlePath != bundleCellPaths_.end()) {
+        return bundlePath->second;
+    }
+
+    auto indexedPath = availableCellPaths_.find(coord);
+    if (indexedPath != availableCellPaths_.end()) {
+        return indexedPath->second;
+    }
+
     const std::filesystem::path root = ResolveRuntimePath(std::filesystem::path(config_.cellDataDirectory));
     return ResolveCellFilePath(root, coord, config_.cellFileExtension).wstring();
 }
@@ -1321,8 +1937,18 @@ void StreamingManager::EnforceMemoryBudget() {
     }
 
     // Evict selected cells
+    uint64_t memoryFreed = 0;
+    float scoreTotal = 0.0f;
     for (const auto& candidate : candidates) {
+        memoryFreed += candidate.memorySize;
+        scoreTotal += candidate.score;
         UnloadCell(candidate.coord);
+    }
+    if (!candidates.empty()) {
+        evictionPolicy_->RecordEvictionBatch(
+            static_cast<uint32_t>(candidates.size()),
+            memoryFreed,
+            scoreTotal / static_cast<float>(candidates.size()));
     }
 
     // Apply unloads immediately so utilization reflects the new state within the same frame.
@@ -1369,9 +1995,32 @@ float StreamingManager::CalculateCellPriority(const CellCoord& coord, const Vec3
 }
 
 float StreamingManager::CalculateLayerPriority(CellLayer layer) const {
-    (void)layer;
-    // TODO: Implement layer-specific priority calculation
-    return 1.0f;
+    // Pull the per-layer priority multiplier from the WorldPartition config so
+    // gameplay-critical layers (terrain, navmesh, collision) outrank cosmetic
+    // layers (vegetation, audio) when budget gets tight.
+    const auto layerIndex = static_cast<size_t>(layer);
+    if (worldPartition_) {
+        const WorldPartitionConfig& wpConfig = worldPartition_->GetConfig();
+        if (layerIndex < wpConfig.layerPriority.size()) {
+            return wpConfig.layerPriority[layerIndex];
+        }
+    }
+
+    // Fallback table mirrors the WorldPartitionConfig defaults so callers get
+    // sensible behavior even if the world partition isn't initialized yet.
+    switch (layer) {
+        case CellLayer::Terrain:    return 1.0f;
+        case CellLayer::StaticMesh: return 0.9f;
+        case CellLayer::Collision:  return 0.9f;
+        case CellLayer::HLOD:       return 0.8f;
+        case CellLayer::NavMesh:    return 0.7f;
+        case CellLayer::Dynamic:    return 0.6f;
+        case CellLayer::Vegetation: return 0.5f;
+        case CellLayer::Props:      return 0.4f;
+        case CellLayer::Audio:      return 0.3f;
+        case CellLayer::Quest:      return 0.2f;
+        default:                    return 0.5f;
+    }
 }
 
 void StreamingManager::UpdateStatistics(float deltaTime) {
@@ -1387,7 +2036,7 @@ void StreamingManager::UpdateStatistics(float deltaTime) {
     stats_.loadingCells = static_cast<uint32_t>(activeLoadOperations_.size());
     for (const CellCoord& coord : loadedCells) {
         const CellData* cell = worldPartition_->GetCell(coord);
-        if (cell && cell->isPlaceholderData) {
+        if (cell && cell->IsPlaceholder()) {
             stats_.placeholderCells++;
         }
     }
@@ -1395,8 +2044,21 @@ void StreamingManager::UpdateStatistics(float deltaTime) {
     // Update memory statistics
     UpdateMemoryStatistics();
 
-    // Update LOD statistics
-    // TODO: Get LOD statistics from LODSystem
+    // Pull LOD bucket counts from the LODSystem so streaming consumers can see
+    // detail/HLOD/impostor distribution alongside cell residency stats.
+    if (lodSystem_) {
+        const auto lodStats = lodSystem_->GetStatistics();
+        stats_.highDetailCells = lodStats.highDetailObjects;
+        stats_.lowDetailCells  = lodStats.mediumDetailObjects + lodStats.lowDetailObjects;
+        stats_.hlodCells       = lodStats.hlodObjects;
+        // Anything currently tracked by the LOD system is by definition visible
+        // (it gets registered when a cell is loaded into view).
+        stats_.visibleCells = lodStats.highDetailObjects +
+                              lodStats.mediumDetailObjects +
+                              lodStats.lowDetailObjects +
+                              lodStats.hlodObjects +
+                              lodStats.impostorObjects;
+    }
 }
 
 } // namespace Streaming
