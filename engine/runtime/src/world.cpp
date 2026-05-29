@@ -6,61 +6,97 @@
 namespace Next {
 
 World::World() : nextEntityID_(1) {
-    NEXT_LOG_INFO("World initialized (CP4 ECS)");
+    NEXT_LOG_INFO("World initialized (archetype ECS)");
 }
 
 World::~World() {
-    // Clean up all systems
-    // NOTE: World does NOT own system pointers. Users must manage system lifetime.
-    // Systems can be stack-allocated or heap-allocated.
-    // We only call Shutdown() here, never delete.
-    // Make a copy of systems vector to avoid issues if Shutdown() modifies the vector
+    // World does NOT own system pointers; the owner manages their lifetime. We deliberately
+    // do not call Shutdown() here (a stack-allocated system may already be gone).
     std::vector<System*> systemsCopy;
     systems_.swap(systemsCopy);
 
-    for (auto* system : systemsCopy) {
-        if (system) {
-            // IMPORTANT: Don't access system members as the system may already be destroyed
-            // (e.g., if it was stack-allocated and went out of scope)
-            // We only check if the pointer is non-null before potentially calling Shutdown.
-            // However, calling Shutdown() on a destroyed system is undefined behavior,
-            // so we should NOT call it here. The system owner is responsible for cleanup.
-        }
-    }
-
-    // Clean up entities and components
+    // Destroy component storage first: clearing archetypes runs every component's destructor
+    // through the registered ops.
+    entityLocation_.clear();
+    archetypeIndex_.clear();
+    archetypes_.clear();
     entities_.clear();
-    entityComponents_.clear();
-    componentArrays_.clear();
     entityMetadata_.clear();
 
     NEXT_LOG_INFO("World destroyed");
 }
 
+// --- Archetype machinery ---------------------------------------------------
+
+Archetype* World::GetOrCreateArchetype(const std::vector<ComponentTypeID>& signature) {
+    auto it = archetypeIndex_.find(signature);
+    if (it != archetypeIndex_.end()) {
+        return archetypes_[it->second].get();
+    }
+    archetypes_.push_back(std::make_unique<Archetype>(signature));
+    const size_t index = archetypes_.size() - 1;
+    archetypeIndex_[signature] = index;
+    return archetypes_[index].get();
+}
+
+void World::EnsureEntityTracked(Entity entity) {
+    if (entityLocation_.find(entity) != entityLocation_.end()) {
+        return;
+    }
+    Archetype* empty = GetOrCreateArchetype({});
+    const size_t row = empty->AddEntityDefault(entity);
+    entityLocation_[entity] = EntityLocation{empty, row};
+}
+
+void World::MigrateEntity(Entity entity, Archetype* from, Archetype* to) {
+    const size_t fromRow = entityLocation_.at(entity).row;
+    const size_t newRow = to->AppendMigratedRow(entity, *from, fromRow);
+
+    // Remove the (now moved-from) source row; a relocated entity needs its row fixed up.
+    const Entity relocated = from->RemoveRow(fromRow);
+    if (relocated.IsValid()) {
+        entityLocation_[relocated].row = fromRow;
+    }
+    entityLocation_[entity] = EntityLocation{to, newRow};
+}
+
+void World::AddComponentType(Entity entity, ComponentTypeID type) {
+    const EntityLocation loc = entityLocation_.at(entity);
+    const std::vector<ComponentTypeID> newSignature = SignatureWith(loc.archetype->Signature(), type);
+    Archetype* target = GetOrCreateArchetype(newSignature);
+    MigrateEntity(entity, loc.archetype, target);
+}
+
+void World::RemoveComponentType(Entity entity, ComponentTypeID type) {
+    const EntityLocation loc = entityLocation_.at(entity);
+    const std::vector<ComponentTypeID> newSignature = SignatureWithout(loc.archetype->Signature(), type);
+    Archetype* target = GetOrCreateArchetype(newSignature);
+    MigrateEntity(entity, loc.archetype, target);
+}
+
+// --- Entity lifecycle ------------------------------------------------------
+
 Entity World::CreateEntity() {
     uint64_t id;
     uint16_t version = 1;
 
-    // Reuse free IDs if available
     if (!freeIDs_.empty()) {
         id = freeIDs_.front();
         freeIDs_.pop_front();
-        version = entityMetadata_[id].version + 1;
+        version = static_cast<uint16_t>(entityMetadata_[id].version + 1);
     } else {
         id = nextEntityID_++;
     }
 
     Entity entity(id, version);
 
-    // Track entity
     entities_.insert(entity);
     entityMetadata_[id] = {version, true};
+    EnsureEntityTracked(entity);  // place in the empty archetype until a component is added
 
     NEXT_LOG_TRACE("Created entity: %llu (version: %u)", id, version);
 
-    // Notify systems
     NotifyEntityCreated(entity);
-
     return entity;
 }
 
@@ -69,28 +105,23 @@ void World::DestroyEntity(Entity entity) {
         return;
     }
 
-    // Remove all components
-    auto it = entityComponents_.find(entity);
-    if (it != entityComponents_.end()) {
-        for (ComponentTypeID typeID : it->second) {
-            auto arrayIt = componentArrays_.find(typeID);
-            if (arrayIt != componentArrays_.end()) {
-                arrayIt->second->RemoveEntity(entity);
-            }
+    auto it = entityLocation_.find(entity);
+    if (it != entityLocation_.end()) {
+        Archetype* archetype = it->second.archetype;
+        const size_t row = it->second.row;
+        const Entity relocated = archetype->RemoveRow(row);
+        if (relocated.IsValid()) {
+            entityLocation_[relocated].row = row;
         }
-        entityComponents_.erase(it);
+        entityLocation_.erase(entity);
     }
 
-    // Mark as invalid
     entities_.erase(entity);
     entityMetadata_[entity.id].alive = false;
-
-    // Add ID to free list
     freeIDs_.push_back(entity.id);
 
     NEXT_LOG_TRACE("Destroyed entity: %llu", entity.id);
 
-    // Notify systems
     NotifyEntityDestroyed(entity);
 }
 
@@ -98,16 +129,15 @@ bool World::IsEntityValid(Entity entity) const {
     if (!entity.IsValid()) {
         return false;
     }
-
     auto it = entityMetadata_.find(entity.id);
     if (it == entityMetadata_.end()) {
         return false;
     }
-
     return it->second.alive && it->second.version == entity.version;
 }
 
-// Legacy Transform methods
+// --- Legacy Transform helpers ----------------------------------------------
+
 TransformComponent* World::AddTransform(Entity entity) {
     return &AddComponent<TransformComponent>(entity);
 }
@@ -120,7 +150,8 @@ void World::RemoveTransform(Entity entity) {
     RemoveComponent<TransformComponent>(entity);
 }
 
-// System management
+// --- System management -----------------------------------------------------
+
 void World::RegisterSystem(System* system) {
     if (system) {
         systems_.push_back(system);
@@ -139,17 +170,16 @@ void World::UnregisterSystem(System* system) {
     }
 }
 
-// World update
 void World::Update(float deltaTime) {
     NEXT_CPU_SCOPE("World::Update");
-
-    // Update all systems
     for (auto* system : systems_) {
         if (system && system->IsEnabled()) {
             system->Update(deltaTime);
         }
     }
 }
+
+// --- Statistics ------------------------------------------------------------
 
 std::vector<Entity> World::GetAllEntities() const {
     std::vector<Entity> result(entities_.begin(), entities_.end());
@@ -166,16 +196,15 @@ World::WorldStats World::GetStats() const {
     WorldStats stats;
     stats.entityCount = entities_.size();
     stats.systemCount = systems_.size();
-
     stats.totalComponents = 0;
-    for (const auto& [entity, components] : entityComponents_) {
-        stats.totalComponents += components.size();
+    for (const auto& archetype : archetypes_) {
+        stats.totalComponents += archetype->Size() * archetype->Signature().size();
     }
-
     return stats;
 }
 
-// Notifications
+// --- Notifications ---------------------------------------------------------
+
 void World::NotifyEntityCreated(Entity entity) {
     for (auto* system : systems_) {
         system->OnEntityCreated(entity);
@@ -200,4 +229,4 @@ void World::NotifyComponentRemoved(Entity entity, ComponentTypeID type) {
     }
 }
 
-} // namespace Next
+}  // namespace Next

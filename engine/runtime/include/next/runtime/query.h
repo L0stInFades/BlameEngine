@@ -11,31 +11,28 @@ class QueryView {
 public:
     explicit QueryView(World& world) : world_(world) {}
 
+    // Iterate every entity that has all of Components. Backed by World::Each, which walks the
+    // contiguous component columns of matching archetypes (no per-entity component lookup).
+    // The callback may accept (Entity, Components&...), (Components&...), or (Entity).
     template<typename Func>
     void ForEach(Func&& func) {
-        auto entities = world_.QueryEntitiesWith<Components...>();
-        for (Entity entity : entities) {
-            Invoke(std::forward<Func>(func), entity);
-        }
+        world_.template Each<Components...>([&func](Entity entity, Components&... components) {
+            if constexpr (std::is_invocable_v<Func&, Entity, Components&...>) {
+                func(entity, components...);
+            } else if constexpr (std::is_invocable_v<Func&, Components&...>) {
+                func(components...);
+            } else if constexpr (std::is_invocable_v<Func&, Entity>) {
+                func(entity);
+            } else {
+                static_assert(AlwaysFalse<Func>::value,
+                              "Query::ForEach callback must accept Entity, Components..., or Entity + Components...");
+            }
+        });
     }
 
 private:
     template<typename T>
     struct AlwaysFalse : std::false_type {};
-
-    template<typename Func>
-    void Invoke(Func&& func, Entity entity) {
-        if constexpr (std::is_invocable_v<Func&, Entity, Components&...>) {
-            func(entity, *world_.GetComponent<Components>(entity)...);
-        } else if constexpr (std::is_invocable_v<Func&, Components&...>) {
-            func(*world_.GetComponent<Components>(entity)...);
-        } else if constexpr (std::is_invocable_v<Func&, Entity>) {
-            func(entity);
-        } else {
-            static_assert(AlwaysFalse<Func>::value,
-                          "Query::ForEach callback must accept Entity, Components..., or Entity + Components...");
-        }
-    }
 
     World& world_;
 };
@@ -53,4 +50,4 @@ private:
     World& world_;
 };
 
-} // namespace Next
+}  // namespace Next

@@ -1,4 +1,5 @@
 #include "next/runtime/asset/package_container.h"
+#include "next/compression/compression.h"
 #include "next/foundation/logger.h"
 #include "next/profiler/cpu_scope.h"
 #include <array>
@@ -238,6 +239,9 @@ bool PackageContainer::Initialize(const std::string& filePath) {
     dataSectionSize_ = 0;
     nameToIndex_.clear();
     const size_t packageDataBytes = fileSize - dataOffset;
+    // Upper bound for any single allocation derived from package metadata; also the
+    // cap for a compressed entry's declared decompressed size.
+    constexpr size_t MAX_REASONABLE_DATA_SIZE = 4ULL * 1024ULL * 1024ULL * 1024ULL; // 4GB
     for (size_t i = 0; i < assetEntries_.size(); ++i) {
         const AssetEntry& entry = assetEntries_[i];
         const uint32_t typeValue = static_cast<uint32_t>(entry.assetType);
@@ -252,20 +256,44 @@ bool PackageContainer::Initialize(const std::string& filePath) {
             return false;
         }
 
+        // minAssetSize is the minimum *logical* (decompressed) size: enough to hold the
+        // type-specific header. assetSize is the *stored* size, which may be smaller than
+        // this when the entry is compressed.
         const size_t minAssetSize = AssetPayloadOffset(entry.assetType);
-        if (entry.assetSize < minAssetSize) {
-            NEXT_LOG_ERROR("Asset entry too small in package index: %s", entry.name);
-            return false;
-        }
+        const bool isCompressed =
+            entry.compressionAlgorithm != static_cast<uint32_t>(Compression::Algorithm::None);
 
-        if (entry.compressedSize != 0) {
-            NEXT_LOG_ERROR("Compressed asset entries are not supported yet: %s", entry.name);
-            return false;
-        }
-
-        if (entry.decompressedSize != entry.assetSize) {
-            NEXT_LOG_ERROR("Asset entry decompressed size mismatch: %s", entry.name);
-            return false;
+        if (isCompressed) {
+            const auto algorithm = static_cast<Compression::Algorithm>(entry.compressionAlgorithm);
+            if (!Compression::IsAvailable(algorithm)) {
+                NEXT_LOG_ERROR("Asset compressed with unavailable codec (%u): %s",
+                               entry.compressionAlgorithm, entry.name);
+                return false;
+            }
+            // Stored bytes are the compressed payload, so they must equal assetSize.
+            if (entry.compressedSize != entry.assetSize) {
+                NEXT_LOG_ERROR("Compressed asset stored-size mismatch: %s", entry.name);
+                return false;
+            }
+            if (entry.decompressedSize < minAssetSize) {
+                NEXT_LOG_ERROR("Compressed asset decompressed size too small: %s", entry.name);
+                return false;
+            }
+            // No explicit upper bound is needed here: decompressedSize is a uint32_t and is
+            // therefore inherently below the 4 GiB allocation cap (MAX_REASONABLE_DATA_SIZE).
+        } else {
+            if (entry.assetSize < minAssetSize) {
+                NEXT_LOG_ERROR("Asset entry too small in package index: %s", entry.name);
+                return false;
+            }
+            if (entry.compressedSize != 0) {
+                NEXT_LOG_ERROR("Uncompressed asset entry has nonzero compressedSize: %s", entry.name);
+                return false;
+            }
+            if (entry.decompressedSize != entry.assetSize) {
+                NEXT_LOG_ERROR("Asset entry decompressed size mismatch: %s", entry.name);
+                return false;
+            }
         }
 
         const size_t entryOffset = entry.dataOffset;
@@ -286,7 +314,6 @@ bool PackageContainer::Initialize(const std::string& filePath) {
     }
 
     // Security: Validate dataSectionSize_ to prevent allocation issues
-    const size_t MAX_REASONABLE_DATA_SIZE = 4ULL * 1024ULL * 1024ULL * 1024ULL; // 4GB max
     if (dataSectionSize_ == 0) {
         NEXT_LOG_ERROR("Invalid data section size: 0 bytes");
         return false;
@@ -364,14 +391,34 @@ bool PackageContainer::ReadAssetData(const std::string& assetName, std::vector<u
     const AssetEntry& entry = assetEntries_[it->second];
     
     const size_t entryOffset = entry.dataOffset;
-    const size_t entrySize = entry.assetSize;
-    if (entryOffset > dataSectionSize_ || entrySize > dataSectionSize_ - entryOffset) {
+    const size_t storedSize = entry.assetSize;
+    if (entryOffset > dataSectionSize_ || storedSize > dataSectionSize_ - entryOffset) {
         NEXT_LOG_ERROR("Asset data out of bounds: %s", assetName.c_str());
         return false;
     }
-    
-    outData.resize(entrySize);
-    memcpy(outData.data(), dataSection_ + entryOffset, entrySize);
+
+    const uint8_t* storedBytes = dataSection_ + entryOffset;
+    const bool isCompressed =
+        entry.compressionAlgorithm != static_cast<uint32_t>(Compression::Algorithm::None);
+    if (isCompressed) {
+        // decompressedSize is a uint32_t, so the allocation below is inherently bounded.
+        const size_t decompressedSize = entry.decompressedSize;
+        outData.resize(decompressedSize);
+        const Compression::Result result = Compression::Decompress(
+            static_cast<Compression::Algorithm>(entry.compressionAlgorithm),
+            storedBytes,
+            storedSize,
+            outData.data(),
+            outData.size());
+        if (!result.Succeeded() || result.bytesWritten != decompressedSize) {
+            NEXT_LOG_ERROR("Failed to decompress asset: %s (%s)",
+                           assetName.c_str(), result.message.c_str());
+            return false;
+        }
+    } else {
+        outData.resize(storedSize);
+        memcpy(outData.data(), storedBytes, storedSize);
+    }
 
     if (outData.size() < sizeof(AssetHeader)) {
         NEXT_LOG_ERROR("Asset data too small for header: %s", assetName.c_str());

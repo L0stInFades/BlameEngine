@@ -1,76 +1,32 @@
-# NEXT Engine
+# Blame Engine
 
-NEXT 是一个面向“两宋项目”的自研引擎仓库。当前状态不是空壳，也还不是完整生产级引擎；更准确地说，它已经具备可构建、可测试、可启动 demo 和编辑器的工作底座。
+**Blame Engine**(代码符号沿用 `NEXT`/`Next`)是公司的**核心技术资产**:一套**与具体游戏无关**的自研引擎,公司所有游戏都在它之上开发。引擎核心(`engine/*`)不依赖任何一款游戏;每款游戏(`game/*`)是引擎的消费者。
 
-## 当前可用能力
+> **技术选型([ADR-0005](docs/adr/0005-ue5-renderer-jolt-headless-world.md))**:渲染交给 **UE5**(只当无逻辑渲染客户端)、物理交给 **Jolt**;公司自研、且拥有的核心 = **headless 权威世界 + 安全玩家代码运行时(WASM 沙箱)+ 一套 Game API**(玩家代码 / AI agent / UE5 视图共用)。
+>
+> **现状(诚实)**:地基扎实且有测试(构建/质量工具链、Job System、Archetype ECS、资产管线、世界流送调度器);护城河核心(Game API、WASM 沙箱、Jolt 绑定、sim↔UE5 复制层、AI-agent 工具面)待建。详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 与 [`docs/TECH_DEBT.md`](docs/TECH_DEBT.md)。
 
-- 运行时：基础 ECS、`Query::ForEach`、资源加载、任务系统存档/事件驱动、世界流送主路径
-- 工具：`next_assetc`、`next_editor` 的 Content / Import / live backbuffer Viewport
-- 程序：`song_demo`、`next_editor`、`next_task`
-- 测试：`ctest -C Debug --output-on-failure`
+**当前首个项目**:一款"真实代码黑客"的开放世界游戏(看门狗式,黑客是玩家真实编写、真实执行、真实影响世界状态的代码)。游戏内的 **HackOps** 是该游戏的黑客层(**游戏特性**,非引擎模块)。
 
-## 当前仍是原型或部分实现
+## 文档入口
 
-- 高阶渲染特性（GI / RT / VXGI 等）仍有 placeholder
-- 编辑器还没有独立 render-to-texture 场景视口
-- 脚本系统支持 `stub` 和可选 system Lua 两态，但没有复杂绑定、热重载依赖图或完整沙箱
+| 我是… | 先读 |
+|---|---|
+| 新人 | [`GETTING_STARTED.md`](GETTING_STARTED.md) — 30 分钟 clone→构建→测试→运行 |
+| 想懂架构 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — 分层 + 模块成熟度 |
+| 要贡献代码 | [`CONTRIBUTING.md`](CONTRIBUTING.md) — 分支/评审/质量闸门 |
+| 做游戏 / 管代码 | [`docs/ENGINEERING_HANDBOOK.md`](docs/ENGINEERING_HANDBOOK.md) — 版本/API 稳定性/游戏如何消费引擎 |
+| 全部文档 | [`docs/README.md`](docs/README.md) — 文档索引 |
 
-## 快速开始
-
-### HackOps / 终端技术线
-
-跨平台开发真实 Neovim、Ops Runtime、玩家代码执行等 HackOps 技术时，使用
-terminal preset，不需要构建当前 Windows/DX12 渲染路径：
+## 30 秒快速开始
 
 ```bash
-cmake --preset terminal-dev
-cmake --build --preset terminal-dev
-out/build/terminal-dev/bin/hackops_demo \
-  --policy tools/nvim_surface_probe/sample_policy.py \
-  --snapshot /tmp/hackops-policy-snapshot.txt
-out/build/terminal-dev/bin/next_nvim_surface_probe \
-  --clean \
-  --file tools/nvim_surface_probe/sample_policy.py \
-  --snapshot /tmp/nvim-surface-cpp.txt
+# 终端/HackOps 技术线(无需渲染器,跨平台最快)
+cmake --preset terminal-dev && cmake --build --preset terminal-dev
+
+# 测试(ASan/UBSan)
+cmake --preset asan && cmake --build out/build/asan --target test_runtime \
+  && ctest --test-dir out/build/asan -R RuntimeTest --output-on-failure
 ```
 
-详细说明见 `docs/HACKOPS_DEV_QUICKSTART.md`。
-
-### 配置与构建
-
-```powershell
-cmake --preset windows-dx12-dev
-cmake --build --preset windows-dx12-dev
-```
-
-如需启用真实 Lua VM，并且本机已经安装 system Lua：
-
-```powershell
-cmake --preset windows-dx12-dev -DUSE_SYSTEM_LUA=ON
-cmake --build --preset windows-dx12-dev
-```
-
-如果没找到 Lua，脚本系统会自动回退到 stub mode，不会阻断构建。
-
-### 运行
-
-```powershell
-.\out\build\windows-dx12-dev\bin\Debug\song_demo.exe
-.\out\build\windows-dx12-dev\bin\Debug\next_editor.exe
-```
-
-推荐的 smoke 命令：
-
-```powershell
-.\out\build\windows-dx12-dev\bin\Debug\song_demo.exe --smoke-frames 5
-.\out\build\windows-dx12-dev\bin\Debug\song_demo.exe --run-self-tests --smoke-frames 1
-.\out\build\windows-dx12-dev\bin\Debug\next_editor.exe --smoke-frames 5 --no-imgui
-.\out\build\windows-dx12-dev\bin\Debug\next_editor.exe --load-package assets\test_package.npkg --smoke-frames 5 --no-imgui
-ctest --test-dir out\build\windows-dx12-dev -C Debug --output-on-failure
-```
-
-## 入口文档
-
-- `docs/README.md`：当前仓库状态与文档索引
-- `docs/EDITOR_QUICKSTART.md`：编辑器用法与当前限制
-- `docs/ASSET_PIPELINE_QUICKSTART.md`：资产导入与打包流程
+预设:`terminal-dev`(终端线)· `headless`(核心库+工具+测试)· `asan`(测试闸门)。渲染交 UE5、物理交 Jolt,本仓库不构建渲染器。详见 [`GETTING_STARTED.md`](GETTING_STARTED.md)。

@@ -1,0 +1,63 @@
+name: code-quality
+
+on:
+  push:
+    branches:
+      - master
+      - "hackops/**"
+      - "rendering/**"
+  pull_request:
+
+jobs:
+  # Enforce .clang-format on the files a change touches (legacy code is grandfathered;
+  # touch a file -> it must be formatted). Run scripts/clang_format.sh locally to fix.
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Check formatting of changed lines (incremental gate)
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then base="${{ github.event.before }}"; fi
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          bash scripts/clang_format_diff.sh "$base"
+
+  # Build and RUN the unit tests under AddressSanitizer + UndefinedBehaviorSanitizer.
+  # This closes two gaps: CI previously never ran ctest, and never ran under sanitizers.
+  sanitizers:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (ASan + UBSan)
+        run: cmake --preset asan
+      - name: Build core test suites
+        run: >
+          cmake --build out/build/asan -j3 --target
+          test_foundation test_jobsystem test_runtime test_world_streaming
+          test_asset_compiler test_task_system test_script_system
+      - name: Run tests under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >
+          ctest --test-dir out/build/asan --output-on-failure
+          -R "FoundationTest|JobSystemTest|RuntimeTest|WorldStreamingTest|AssetCompilerTest|TaskSystemTest|ScriptSystemTest"
+
+  # Static analysis with cppcheck (advisory: surfaces issues without blocking the build).
+  cppcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: Run cppcheck
+        run: >
+          cppcheck --enable=warning,performance,portability --std=c++17
+          --inline-suppr --quiet --error-exitcode=0
+          -i third_party engine tools game

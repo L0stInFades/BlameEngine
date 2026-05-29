@@ -120,7 +120,7 @@ void Logger::LogV(LogLevel level, const char* format, va_list args) {
     // Get current time
     char timeStr[64];
     time_t now = time(nullptr);
-    struct tm timeInfo;
+    struct tm timeInfo{};  // value-init so a failed localtime call can't leave it garbage
 #ifdef _WIN32
     localtime_s(&timeInfo, &now);
 #else

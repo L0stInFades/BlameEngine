@@ -20,7 +20,6 @@ add_library(next_world STATIC
 target_include_directories(next_world
     PUBLIC
         ${CMAKE_SOURCE_DIR}/engine/world/include
-        ${CMAKE_SOURCE_DIR}/engine/renderer/include
     PRIVATE
         ${CMAKE_SOURCE_DIR}/engine/foundation/include
         ${CMAKE_SOURCE_DIR}/engine/compression/include

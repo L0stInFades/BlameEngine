@@ -188,6 +188,164 @@ static std::vector<uint8_t> BuildPackagePayload(
     return payload;
 }
 
+// Extract the outgoing resource dependencies declared by an asset blob. Today only
+// materials carry references (their TextureRef table); meshes and textures are leaves.
+static std::vector<std::string> ExtractAssetDependencies(const std::vector<uint8_t>& blob,
+                                                         const AssetHeader& header) {
+    std::vector<std::string> deps;
+    if (header.assetType != AssetType::Material || blob.size() < sizeof(MaterialHeader)) {
+        return deps;
+    }
+
+    MaterialHeader material{};
+    std::memcpy(&material, blob.data(), sizeof(MaterialHeader));
+
+    // Bounds-check the texture-ref table before walking it.
+    const size_t refBytes = static_cast<size_t>(material.textureCount) * sizeof(TextureRef);
+    if (material.textureCount != 0 && refBytes / sizeof(TextureRef) != material.textureCount) {
+        return deps; // multiplication overflow
+    }
+    if (blob.size() < sizeof(MaterialHeader) + refBytes) {
+        return deps;
+    }
+
+    const uint8_t* refBase = blob.data() + sizeof(MaterialHeader);
+    deps.reserve(material.textureCount);
+    for (uint32_t i = 0; i < material.textureCount; ++i) {
+        TextureRef ref{};
+        std::memcpy(&ref, refBase + static_cast<size_t>(i) * sizeof(TextureRef), sizeof(TextureRef));
+        char nameBuf[sizeof(ref.name) + 1] = {};
+        std::memcpy(nameBuf, ref.name, sizeof(ref.name));
+        if (nameBuf[0] != '\0') {
+            deps.emplace_back(nameBuf);
+        }
+    }
+    return deps;
+}
+
+static std::string JsonEscape(const std::string& value) {
+    std::string out;
+    out.reserve(value.size() + 2);
+    for (char c : value) {
+        if (c == '"' || c == '\\') {
+            out += '\\';
+            out += c;
+        } else if (static_cast<unsigned char>(c) < 0x20) {
+            out += ' '; // collapse control characters; asset names are printable in practice
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
+static const char* PackageCompressionName(uint32_t algorithm) {
+    switch (static_cast<Compression::Algorithm>(algorithm)) {
+        case Compression::Algorithm::LZ4:  return "lz4";
+        case Compression::Algorithm::Zstd: return "zstd";
+        default:                           return "none";
+    }
+}
+
+// Emit a human-readable, queryable sidecar describing the package: per-asset size,
+// compression and (forward) dependency edges, plus dangling-reference warnings. This is
+// the first slice of the "resource graph + tools emit stats/deps/validation" discipline.
+static void WritePackageManifest(const std::string& packagePath,
+                                 const std::string& packageName,
+                                 const std::vector<AssetEntry>& entries,
+                                 const std::vector<std::vector<std::string>>& dependencies) {
+    std::unordered_set<std::string> present;
+    for (const auto& entry : entries) {
+        present.insert(std::string(entry.name));
+    }
+
+    // The stable asset id is CRC64 of the canonical "<package-key>::<name>" string, where
+    // package-key is the file stem the runtime registers the package under (AssetManager
+    // resolves storage keys as "<stem>::<localName>"). Emitting it here makes the manifest
+    // the bridge between offline cook identity and the runtime AssetHandle id.
+    const std::string packageKeyPrefix =
+        std::filesystem::path(packagePath).stem().string() + "::";
+
+    uint64_t totalStored = 0;
+    uint64_t totalDecompressed = 0;
+    for (const auto& entry : entries) {
+        totalStored += entry.assetSize;
+        totalDecompressed += entry.decompressedSize;
+    }
+
+    // A referenced asset absent from this package is only a warning: it may legitimately
+    // live in another package loaded at runtime. A future global cook can promote this.
+    std::vector<std::string> warnings;
+    for (size_t i = 0; i < entries.size(); ++i) {
+        for (const std::string& dep : dependencies[i]) {
+            if (present.find(dep) == present.end()) {
+                warnings.push_back("Asset '" + std::string(entries[i].name) + "' references '" +
+                                   dep + "' which is not present in package '" + packageName +
+                                   "' (may be provided by another package)");
+            }
+        }
+    }
+
+    std::string json;
+    json += "{\n";
+    json += "  \"package\": \"" + JsonEscape(packageName) + "\",\n";
+    json += "  \"formatVersion\": " + std::to_string(PackageHeader::CURRENT_VERSION) + ",\n";
+    json += "  \"assetCount\": " + std::to_string(entries.size()) + ",\n";
+    json += "  \"totalStoredBytes\": " + std::to_string(totalStored) + ",\n";
+    json += "  \"totalDecompressedBytes\": " + std::to_string(totalDecompressed) + ",\n";
+    json += "  \"assets\": [\n";
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const AssetEntry& entry = entries[i];
+        const std::string assetKey = packageKeyPrefix + std::string(entry.name);
+        uint64_t assetId = CalculateCRC64(assetKey.data(), assetKey.size());
+        if (assetId == 0) {
+            assetId = ~0ull; // mirror the runtime's reserved-zero remap
+        }
+        json += "    {\n";
+        json += "      \"name\": \"" + JsonEscape(std::string(entry.name)) + "\",\n";
+        json += "      \"id\": \"" + std::to_string(assetId) + "\",\n";
+        json += "      \"type\": \"" + std::string(AssetTypeToString(entry.assetType)) + "\",\n";
+        json += "      \"compression\": \"" + std::string(PackageCompressionName(entry.compressionAlgorithm)) + "\",\n";
+        json += "      \"dataOffset\": " + std::to_string(entry.dataOffset) + ",\n";
+        json += "      \"storedBytes\": " + std::to_string(entry.assetSize) + ",\n";
+        json += "      \"decompressedBytes\": " + std::to_string(entry.decompressedSize) + ",\n";
+        json += "      \"dependencies\": [";
+        for (size_t d = 0; d < dependencies[i].size(); ++d) {
+            if (d != 0) {
+                json += ", ";
+            }
+            json += "\"" + JsonEscape(dependencies[i][d]) + "\"";
+        }
+        json += "]\n";
+        json += (i + 1 < entries.size()) ? "    },\n" : "    }\n";
+    }
+    json += "  ],\n";
+    json += "  \"warnings\": [";
+    for (size_t w = 0; w < warnings.size(); ++w) {
+        json += (w == 0) ? "\n    \"" : ",\n    \"";
+        json += JsonEscape(warnings[w]) + "\"";
+    }
+    json += warnings.empty() ? "]\n" : "\n  ]\n";
+    json += "}\n";
+
+    const std::string manifestPath = packagePath + ".manifest.json";
+    std::ofstream out(manifestPath, std::ios::binary | std::ios::trunc);
+    if (!out.is_open()) {
+        NEXT_LOG_ERROR("Failed to open package manifest for writing: %s", manifestPath.c_str());
+        return;
+    }
+    out.write(json.data(), static_cast<std::streamsize>(json.size()));
+    if (!out.good()) {
+        NEXT_LOG_ERROR("Failed while writing package manifest: %s", manifestPath.c_str());
+        return;
+    }
+    for (const std::string& warning : warnings) {
+        NEXT_LOG_WARNING("%s", warning.c_str());
+    }
+    NEXT_LOG_INFO("Wrote package manifest: %s (%zu assets, %zu warnings)",
+                  manifestPath.c_str(), entries.size(), warnings.size());
+}
+
 } // namespace
 
 bool AssetCompiler::CompileMesh(const std::string& sourcePath, const std::string& outputPath) {
@@ -452,12 +610,44 @@ bool AssetCompiler::CompileCell(
 
 bool AssetCompiler::CreatePackage(const std::string& packageName,
                                  const std::vector<std::string>& assetFiles,
-                                 const std::string& outputPath) {
-    NEXT_LOG_INFO("Creating package: %s with %zu assets", packageName.c_str(), assetFiles.size());
-    
+                                 const std::string& outputPath,
+                                 const std::string& compression) {
+    NEXT_LOG_INFO("Creating package: %s with %zu assets (compression=%s)",
+                  packageName.c_str(), assetFiles.size(), compression.c_str());
+
     if (assetFiles.empty()) {
         NEXT_LOG_ERROR("No assets specified for package");
         return false;
+    }
+
+    // Resolve the requested compression mode. "auto" prefers LZ4, then Zstd, and falls
+    // back to storing uncompressed when no codec is available or compression doesn't help.
+    std::string mode = compression;
+    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    Compression::Algorithm packageAlgorithm = Compression::Algorithm::None;
+    if (mode == "none" || mode == "raw" || mode.empty()) {
+        packageAlgorithm = Compression::Algorithm::None;
+    } else if (mode == "lz4") {
+        packageAlgorithm = Compression::Algorithm::LZ4;
+    } else if (mode == "zstd" || mode == "zstandard") {
+        packageAlgorithm = Compression::Algorithm::Zstd;
+    } else if (mode == "auto") {
+        if (Compression::IsAvailable(Compression::Algorithm::LZ4)) {
+            packageAlgorithm = Compression::Algorithm::LZ4;
+        } else if (Compression::IsAvailable(Compression::Algorithm::Zstd)) {
+            packageAlgorithm = Compression::Algorithm::Zstd;
+        }
+    } else {
+        NEXT_LOG_ERROR("Unsupported package compression mode: %s", compression.c_str());
+        return false;
+    }
+    if (packageAlgorithm != Compression::Algorithm::None &&
+        !Compression::IsAvailable(packageAlgorithm)) {
+        NEXT_LOG_WARNING("Compression codec %s unavailable; storing package uncompressed",
+                         Compression::AlgorithmName(packageAlgorithm));
+        packageAlgorithm = Compression::Algorithm::None;
     }
     
     constexpr uint64_t maxPackageField = std::numeric_limits<uint32_t>::max();
@@ -486,6 +676,7 @@ bool AssetCompiler::CreatePackage(const std::string& packageName,
 
     std::vector<std::vector<uint8_t>> assetData;
     std::vector<AssetEntry> entries;
+    std::vector<std::vector<std::string>> assetDependencies; // parallel to entries
     std::unordered_set<std::string> assetNames;
     
     uint64_t dataOffset = 0;
@@ -521,15 +712,46 @@ bool AssetCompiler::CreatePackage(const std::string& packageName,
             NEXT_LOG_ERROR("Checksum validation failed for asset file: %s", assetFile.c_str());
             return false;
         }
-        
-        // Create asset entry
-        const uint32_t assetSize = static_cast<uint32_t>(data.size());
+
+        // Extract forward dependencies from the uncompressed blob before it is (maybe) moved.
+        std::vector<std::string> deps = ExtractAssetDependencies(data, header);
+
+        // Determine the stored (optionally compressed) bytes for this asset blob.
+        const uint32_t decompressedSize = static_cast<uint32_t>(data.size());
+        std::vector<uint8_t> storedBytes;
+        Compression::Algorithm entryAlgorithm = Compression::Algorithm::None;
+
+        if (packageAlgorithm != Compression::Algorithm::None) {
+            const uint64_t bound = Compression::CompressBound(packageAlgorithm, data.size());
+            if (bound != 0) {
+                std::vector<uint8_t> compressed(static_cast<size_t>(bound));
+                const Compression::Result result = Compression::Compress(
+                    packageAlgorithm,
+                    data.data(),
+                    data.size(),
+                    compressed.data(),
+                    compressed.size());
+                // Keep compression only when it actually shrinks the blob.
+                if (result.Succeeded() && result.bytesWritten < data.size()) {
+                    compressed.resize(static_cast<size_t>(result.bytesWritten));
+                    storedBytes = std::move(compressed);
+                    entryAlgorithm = packageAlgorithm;
+                }
+            }
+        }
+        if (entryAlgorithm == Compression::Algorithm::None) {
+            storedBytes = std::move(data);
+        }
+
+        const uint32_t storedSize = static_cast<uint32_t>(storedBytes.size());
+
         AssetEntry entry{};
         entry.assetType = header.assetType;
-        entry.assetSize = assetSize;
+        entry.assetSize = storedSize;
         entry.dataOffset = static_cast<uint32_t>(dataOffset);
-        entry.compressedSize = 0; // No compression for CP3
-        entry.decompressedSize = assetSize;
+        entry.compressionAlgorithm = static_cast<uint32_t>(entryAlgorithm);
+        entry.compressedSize = (entryAlgorithm == Compression::Algorithm::None) ? 0u : storedSize;
+        entry.decompressedSize = decompressedSize;
         CopyFixedString(entry.name, header.name);
 
         const std::string assetName(entry.name);
@@ -537,11 +759,18 @@ bool AssetCompiler::CreatePackage(const std::string& packageName,
             NEXT_LOG_ERROR("Duplicate asset name in package input: %s", assetName.c_str());
             return false;
         }
-        
-        entries.push_back(entry);
-        assetData.push_back(std::move(data));
 
-        dataOffset += assetSize;
+        if (entryAlgorithm != Compression::Algorithm::None) {
+            NEXT_LOG_DEBUG("  Compressed %s: %u -> %u bytes (%s)",
+                           entry.name, decompressedSize, storedSize,
+                           Compression::AlgorithmName(entryAlgorithm));
+        }
+
+        entries.push_back(entry);
+        assetData.push_back(std::move(storedBytes));
+        assetDependencies.push_back(std::move(deps));
+
+        dataOffset += storedSize;
     }
     
     // Create package header
@@ -554,7 +783,13 @@ bool AssetCompiler::CreatePackage(const std::string& packageName,
     packageHeader.checksum = 0;
     CopyFixedString(packageHeader.name, packageName);
     
-    return WritePackage(outputPath, packageHeader, entries, assetData);
+    if (!WritePackage(outputPath, packageHeader, entries, assetData)) {
+        return false;
+    }
+
+    // Emit the queryable manifest sidecar (stats + forward dependency edges + warnings).
+    WritePackageManifest(outputPath, packageName, entries, assetDependencies);
+    return true;
 }
 
 bool AssetCompiler::GenerateTestAssets(const std::string& outputDir) {
@@ -628,8 +863,10 @@ bool AssetCompiler::GenerateTestAssets(const std::string& outputDir) {
         occlusionPath,
         materialPath};
     std::string packagePath = outputDir + "/test_package.npkg";
-    
-    if (!CreatePackage("TestPackage", assetFiles, packagePath)) {
+
+    // Sample/test fixtures are stored uncompressed so packaging is deterministic and
+    // byte offsets are stable for the asset-pipeline tests.
+    if (!CreatePackage("TestPackage", assetFiles, packagePath, "none")) {
         NEXT_LOG_ERROR("Failed to create test package");
         return false;
     }

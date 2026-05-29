@@ -1,6 +1,6 @@
 #pragma once
 
-#include "next/renderer/math/math.h"
+#include "next/math/math.h"
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>

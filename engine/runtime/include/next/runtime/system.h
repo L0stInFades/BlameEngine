@@ -20,10 +20,10 @@ public:
     virtual void Shutdown() {}
 
     // Entity events
-    virtual void OnEntityCreated(Entity entity) {}
-    virtual void OnEntityDestroyed(Entity entity) {}
-    virtual void OnComponentAdded(Entity entity, ComponentTypeID type) {}
-    virtual void OnComponentRemoved(Entity entity, ComponentTypeID type) {}
+    virtual void OnEntityCreated(Entity /*entity*/) {}
+    virtual void OnEntityDestroyed(Entity /*entity*/) {}
+    virtual void OnComponentAdded(Entity /*entity*/, ComponentTypeID /*type*/) {}
+    virtual void OnComponentRemoved(Entity /*entity*/, ComponentTypeID /*type*/) {}
 
     // System name for debugging
     virtual const char* GetName() const { return "System"; }

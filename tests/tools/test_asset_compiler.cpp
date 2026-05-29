@@ -756,7 +756,7 @@ TEST_F(AssetCompilerTest, PackageLoaderRejectsTruncatedDataSection) {
     EXPECT_EQ(PackageContainer::LoadFromFile(packagePath.string()), nullptr);
 }
 
-TEST_F(AssetCompilerTest, PackageLoaderRejectsUnsupportedCompressedEntry) {
+TEST_F(AssetCompilerTest, PackageLoaderRejectsNonzeroCompressedSizeWithoutCodec) {
     AssetCompiler compiler;
     ASSERT_TRUE(compiler.GenerateTestAssets(tempDir_.string()));
 
@@ -768,8 +768,11 @@ TEST_F(AssetCompilerTest, PackageLoaderRejectsUnsupportedCompressedEntry) {
     packageHeader.checksum = 0;
     std::memcpy(packageBytes.data(), &packageHeader, sizeof(packageHeader));
 
+    // An entry that claims a compressed payload (compressedSize != 0) but names no codec
+    // is inconsistent and must be rejected.
     AssetEntry checkerEntry{};
     ASSERT_TRUE(FindPackageEntry(packageBytes, packageHeader, "TestChecker", checkerEntry));
+    checkerEntry.compressionAlgorithm = static_cast<uint32_t>(Compression::Algorithm::None);
     checkerEntry.compressedSize = checkerEntry.assetSize - 1;
     ASSERT_TRUE(RewritePackageEntry(packageBytes, packageHeader, "TestChecker", checkerEntry));
     WriteBinaryFile(packagePath, packageBytes);
@@ -791,11 +794,140 @@ TEST_F(AssetCompilerTest, PackageLoaderRejectsMismatchedDecompressedSize) {
 
     AssetEntry checkerEntry{};
     ASSERT_TRUE(FindPackageEntry(packageBytes, packageHeader, "TestChecker", checkerEntry));
+    // An uncompressed entry must have decompressedSize == assetSize.
+    checkerEntry.compressionAlgorithm = static_cast<uint32_t>(Compression::Algorithm::None);
+    checkerEntry.compressedSize = 0;
     checkerEntry.decompressedSize = checkerEntry.assetSize + 1;
     ASSERT_TRUE(RewritePackageEntry(packageBytes, packageHeader, "TestChecker", checkerEntry));
     WriteBinaryFile(packagePath, packageBytes);
 
     EXPECT_EQ(PackageContainer::LoadFromFile(packagePath.string()), nullptr);
+}
+
+TEST_F(AssetCompilerTest, PackageRoundTripsCompressedAsset) {
+    if (!Compression::IsAvailable(Compression::Algorithm::LZ4)) {
+        GTEST_SKIP() << "LZ4 codec unavailable in this build";
+    }
+
+    AssetCompiler compiler;
+
+    // Build a large, highly compressible mesh asset (zero-filled payload). The checksum
+    // is computed over the payload so the loader verifies the *decompressed* bytes.
+    constexpr uint32_t kPayloadBytes = 8192;
+    std::vector<uint8_t> assetBytes(sizeof(MeshHeader) + kPayloadBytes, 0u);
+    const uint64_t checksum =
+        CalculateCRC64(assetBytes.data() + sizeof(MeshHeader), kPayloadBytes);
+
+    MeshHeader mesh{};
+    mesh.common.magic = AssetHeader::MAGIC;
+    mesh.common.version = AssetHeader::CURRENT_VERSION;
+    mesh.common.assetType = AssetType::Mesh;
+    mesh.common.dataSize = kPayloadBytes;
+    mesh.common.checksum = checksum;
+    std::strncpy(mesh.common.name, "CompressibleMesh", sizeof(mesh.common.name) - 1);
+    std::memcpy(assetBytes.data(), &mesh, sizeof(mesh));
+
+    const std::filesystem::path assetPath = tempDir_ / "compressible.mesh";
+    const std::filesystem::path packagePath = tempDir_ / "compressed_package.npkg";
+    WriteBinaryFile(assetPath, assetBytes);
+
+    ASSERT_TRUE(compiler.CreatePackage("compressed_package",
+                                       {assetPath.string()},
+                                       packagePath.string(),
+                                       "lz4"));
+
+    // The on-disk entry must be marked compressed and physically smaller than the blob.
+    std::vector<uint8_t> packageBytes = ReadBinaryFile(packagePath);
+    ASSERT_GT(packageBytes.size(), sizeof(PackageHeader));
+    const PackageHeader packageHeader = ReadHeader<PackageHeader>(packageBytes);
+    EXPECT_EQ(packageHeader.version, PackageHeader::CURRENT_VERSION);
+
+    AssetEntry entry{};
+    ASSERT_TRUE(FindPackageEntry(packageBytes, packageHeader, "CompressibleMesh", entry));
+    EXPECT_EQ(entry.compressionAlgorithm, static_cast<uint32_t>(Compression::Algorithm::LZ4));
+    EXPECT_EQ(entry.decompressedSize, static_cast<uint32_t>(assetBytes.size()));
+    EXPECT_EQ(entry.compressedSize, entry.assetSize);
+    EXPECT_LT(entry.assetSize, entry.decompressedSize);
+
+    // The loader must transparently decompress and return the exact original bytes.
+    std::shared_ptr<PackageContainer> package = PackageContainer::LoadFromFile(packagePath.string());
+    ASSERT_NE(package, nullptr);
+
+    std::vector<uint8_t> readBack;
+    ASSERT_TRUE(package->ReadAssetData("CompressibleMesh", readBack));
+    ASSERT_EQ(readBack.size(), assetBytes.size());
+    EXPECT_EQ(std::memcmp(readBack.data(), assetBytes.data(), assetBytes.size()), 0);
+}
+
+TEST_F(AssetCompilerTest, PackageManifestRecordsAssetsAndMaterialDependencies) {
+    AssetCompiler compiler;
+    ASSERT_TRUE(compiler.GenerateTestAssets(tempDir_.string()));
+
+    const std::filesystem::path manifestPath = tempDir_ / "test_package.npkg.manifest.json";
+    ASSERT_TRUE(std::filesystem::exists(manifestPath));
+
+    const std::vector<uint8_t> bytes = ReadBinaryFile(manifestPath);
+    const std::string json(bytes.begin(), bytes.end());
+
+    // Package-level facts.
+    EXPECT_NE(json.find("\"package\": \"TestPackage\""), std::string::npos);
+    EXPECT_NE(json.find("\"assetCount\": 7"), std::string::npos);
+    EXPECT_NE(json.find("\"name\": \"TestPBR\""), std::string::npos);
+
+    // The PBR material's forward dependency edges (its five texture references).
+    for (const char* dep : {"TestChecker", "DefaultNormal", "DefaultMetallicRoughness",
+                            "DefaultEmissive", "DefaultOcclusion"}) {
+        EXPECT_NE(json.find(std::string("\"") + dep + "\""), std::string::npos) << dep;
+    }
+
+    // All five referenced textures are present in-package, so there are no dangling refs.
+    EXPECT_NE(json.find("\"warnings\": []"), std::string::npos);
+
+    // The manifest stamps each asset with the same stable id the runtime AssetManager
+    // assigns (CRC64 of "<package-stem>::<name>"), bridging offline and runtime identity.
+    const std::string pbrKey = "test_package::TestPBR";
+    uint64_t expectedPbrId = CalculateCRC64(pbrKey.data(), pbrKey.size());
+    if (expectedPbrId == 0) {
+        expectedPbrId = ~0ull;
+    }
+    EXPECT_NE(json.find("\"id\": \"" + std::to_string(expectedPbrId) + "\""), std::string::npos);
+}
+
+TEST_F(AssetCompilerTest, PackageManifestWarnsOnDanglingMaterialDependency) {
+    AssetCompiler compiler;
+
+    // A material that references a texture which is NOT packaged alongside it.
+    MaterialHeader material{};
+    material.common.magic = AssetHeader::MAGIC;
+    material.common.version = AssetHeader::CURRENT_VERSION;
+    material.common.assetType = AssetType::Material;
+    std::strncpy(material.common.name, "LonelyMaterial", sizeof(material.common.name) - 1);
+    material.textureCount = 1;
+    material.parameterCount = 0;
+    material.common.dataSize = static_cast<uint32_t>(sizeof(TextureRef));
+
+    TextureRef ref{};
+    std::strncpy(ref.name, "MissingTexture", sizeof(ref.name) - 1);
+    ref.slot = 0;
+    ref.type = TextureRef::ALBEDO;
+
+    std::vector<uint8_t> assetBytes(sizeof(MaterialHeader) + sizeof(TextureRef), 0u);
+    std::memcpy(assetBytes.data(), &material, sizeof(MaterialHeader));
+    std::memcpy(assetBytes.data() + sizeof(MaterialHeader), &ref, sizeof(TextureRef));
+
+    const std::filesystem::path assetPath = tempDir_ / "lonely.material";
+    const std::filesystem::path packagePath = tempDir_ / "lonely_package.npkg";
+    WriteBinaryFile(assetPath, assetBytes);
+    ASSERT_TRUE(compiler.CreatePackage("lonely_package", {assetPath.string()}, packagePath.string()));
+
+    const std::filesystem::path manifestPath = tempDir_ / "lonely_package.npkg.manifest.json";
+    ASSERT_TRUE(std::filesystem::exists(manifestPath));
+    const std::vector<uint8_t> bytes = ReadBinaryFile(manifestPath);
+    const std::string json(bytes.begin(), bytes.end());
+
+    EXPECT_NE(json.find("\"MissingTexture\""), std::string::npos);
+    EXPECT_NE(json.find("MissingTexture' which is not present"), std::string::npos);
+    EXPECT_EQ(json.find("\"warnings\": []"), std::string::npos);
 }
 
 TEST_F(AssetCompilerTest, PackageLoaderRejectsUnterminatedPackageName) {

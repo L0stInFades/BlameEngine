@@ -55,7 +55,7 @@ void ConsoleLogAppender::Write(const LogRecord& record) {
     // 时间戳
     if (record.timestamp > 0.0) {
         time_t time = static_cast<time_t>(record.timestamp);
-        tm tm;
+        tm tm{};
 #ifdef _WIN32
         localtime_s(&tm, &time);
 #else
@@ -135,7 +135,7 @@ void FileLogAppender::Write(const LogRecord& record) {
     // 时间戳
     if (record.timestamp > 0.0) {
         time_t time = static_cast<time_t>(record.timestamp);
-        tm tm;
+        tm tm{};
 #ifdef _WIN32
         localtime_s(&tm, &time);
 #else
@@ -196,7 +196,7 @@ void DebuggerLogAppender::Write(const LogRecord& record) {
     // 时间戳
     if (record.timestamp > 0.0) {
         time_t time = static_cast<time_t>(record.timestamp);
-        tm tm;
+        tm tm{};
         localtime_s(&tm, &time);
         oss << " [" << std::put_time(&tm, "%H:%M:%S") << "]";
     }
@@ -370,7 +370,7 @@ std::string Logger::FormatRecord(const LogRecord& record) {
     // 时间戳
     if (record.timestamp > 0.0) {
         time_t time = static_cast<time_t>(record.timestamp);
-        tm tm;
+        tm tm{};
 #ifdef _WIN32
         localtime_s(&tm, &time);
 #else

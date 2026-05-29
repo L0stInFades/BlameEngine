@@ -12,6 +12,9 @@ target_include_directories(next_asset
 )
 
 target_link_libraries(next_asset PUBLIC next_foundation next_jobsystem)
+# Compression is an internal implementation detail: package_container decompresses
+# LZ4/Zstd entries on read. Consumers of next_asset don't see the compression API.
+target_link_libraries(next_asset PRIVATE next_compression)
 
 if(NOT MSVC)
     target_compile_options(next_asset PRIVATE

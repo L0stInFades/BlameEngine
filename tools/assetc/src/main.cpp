@@ -15,7 +15,7 @@ int main(int argc, char* argv[]) {
         std::cout << "  next_assetc compile <input> <output> - Compile single asset" << std::endl;
         std::cout << "  next_assetc cell <input.bin> <output.ncell> [none|lz4|zstd] - Compile streaming cell" << std::endl;
         std::cout << "  next_assetc import <input.obj> <output.npkg> - Compile a model into a package (mesh only for now)" << std::endl;
-        std::cout << "  next_assetc package <name> <output> <assets...> - Create package" << std::endl;
+        std::cout << "  next_assetc package <name> <output> [--compress=auto|none|lz4|zstd] <assets...> - Create package" << std::endl;
         return 1;
     }
     
@@ -135,15 +135,28 @@ int main(int argc, char* argv[]) {
         
         std::string packageName = argv[2];
         std::string outputPath = argv[3];
+        std::string compression = "auto";
         std::vector<std::string> assetFiles;
-        
+
+        const std::string kCompressPrefix = "--compress=";
         for (int i = 4; i < argc; ++i) {
-            assetFiles.push_back(argv[i]);
+            const std::string arg = argv[i];
+            if (arg.rfind(kCompressPrefix, 0) == 0) {
+                compression = arg.substr(kCompressPrefix.size());
+                continue;
+            }
+            assetFiles.push_back(arg);
         }
-        
-        NEXT_LOG_INFO("Creating package: %s with %zu assets", packageName.c_str(), assetFiles.size());
-        
-        if (!compiler.CreatePackage(packageName, assetFiles, outputPath)) {
+
+        if (assetFiles.empty()) {
+            std::cout << "Error: at least one asset file is required" << std::endl;
+            return 1;
+        }
+
+        NEXT_LOG_INFO("Creating package: %s with %zu assets (compression=%s)",
+                      packageName.c_str(), assetFiles.size(), compression.c_str());
+
+        if (!compiler.CreatePackage(packageName, assetFiles, outputPath, compression)) {
             NEXT_LOG_ERROR("Failed to create package");
             return 1;
         }

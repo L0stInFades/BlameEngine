@@ -1,4 +1,4 @@
-#include "next/renderer/math/math.h"
+#include "next/math/math.h"
 #include <gtest/gtest.h>
 #include <cmath>
 

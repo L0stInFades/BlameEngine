@@ -45,47 +45,14 @@ The `--clean` flag keeps CI and new developer machines independent from a
 personal LazyVim setup. Omit it locally when validating the real user
 configuration.
 
-## Windows Song / Editor Track
+## Rendering (UE5, out of this repo)
 
-The existing song/editor track is still Windows/DX12-first:
-
-```powershell
-cmake --preset windows-dx12-dev
-cmake --build --preset windows-dx12-dev
-ctest --test-dir out/build/windows-dx12-dev -C Debug --output-on-failure
-```
-
-Run the DX12U renderer smoke verification:
-
-```powershell
-.\scripts\verify_dx12u.ps1
-```
-
-This verifier is intentionally stricter than a normal build. It must run on
-Windows, requires Windows SDK `10.0.20348.0` or newer, `cmake`, `dxc.exe`, and
-`dxcompiler.dll`, compiles all SM6 shader targets including mesh shaders,
-sampler feedback, and the RTGI `lib_6_3` library, then runs `song_demo` with
-`NEXT_RENDERER_BACKEND=dx12`, `NEXT_REQUIRE_DX12U=1`, `NEXT_MESH_SHADER_DEBUG=1`,
-and `NEXT_SAMPLER_FEEDBACK_DEBUG=1` so the mesh shader PSO, `DispatchMesh`,
-sampler feedback map creation, and feedback write path are exercised during
-runtime smoke.
-
-Useful renderer switches while debugging:
-
-```powershell
-$env:NEXT_DEBUG_VIEW = "heatmap"      # default, wireframe, normals, depth, heatmap, ...
-$env:NEXT_VRS_SHADING_RATE = "2x2"    # 1x1, 1x2, 2x1, 2x2
-$env:NEXT_MESH_SHADER_DEBUG = "1"     # enables the DX12U mesh shader debug dispatch
-$env:NEXT_SAMPLER_FEEDBACK_DEBUG = "1" # enables sampler feedback map writes
-$env:NEXT_DX12_ALLOW_GPU_OVERLAP = "1" # opt out of conservative sync after per-frame dynamic resources are audited
-.\scripts\verify_dx12u.ps1 -SmokeFrames 240
-```
-
-Use build/HLSL-only mode on Windows CI runners without an attached DX12U GPU:
-
-```powershell
-.\scripts\verify_dx12u.ps1 -SkipRuntimeSmoke
-```
+There is no in-repo renderer anymore (ADR-0005): the self-built DX12/Metal
+backend, the editor, and the `song_demo` target were deleted in 2026-05.
+Rendering happens in a separate **UE5 view client** that consumes this core's
+snapshot stream over the sim↔UE5 boundary. The HackOps tech line here runs
+fully **headless** — `hackops_demo` needs no GPU. See
+[`design/sim-ue5-boundary.md`](design/sim-ue5-boundary.md).
 
 ## Current Module Boundary
 
@@ -97,4 +64,5 @@ Use build/HLSL-only mode on Windows CI runners without an attached DX12U GPU:
 
 Keep HackOps-specific gameplay in future `game/hackops` or `data/hackops`
 targets. Shared reusable technology belongs in neutral engine modules such as
-`engine/terminal`, `engine/kernel`, `engine/world_api`, or `engine/rhi`.
+`engine/terminal`, `engine/runtime`, `engine/world`, or the future
+`engine/gameapi` / `engine/sandbox` (the Game API + WASM player-code runtime).

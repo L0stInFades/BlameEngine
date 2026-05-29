@@ -141,9 +141,12 @@ struct PackageHeader {
     uint32_t dataOffset;      // Offset to asset data
     uint64_t checksum;        // CRC64 checksum
     char name[64];            // Package name
-    
+
     static constexpr uint32_t MAGIC = 0x4E504B47; // 'NPKG'
-    static constexpr uint32_t CURRENT_VERSION = 1;
+    // v2: AssetEntry gained compressionAlgorithm and per-entry payloads may be
+    // LZ4/Zstd compressed. v1 packages (uncompressed, smaller AssetEntry stride)
+    // are rejected by the loader and must be re-cooked with next_assetc.
+    static constexpr uint32_t CURRENT_VERSION = 2;
 
     bool HasValidName() const {
         return name[0] != '\0' &&
@@ -159,14 +162,28 @@ struct PackageHeader {
     }
 };
 
-// Asset entry in package index
+// Asset entry in package index.
+//
+// Size-field semantics (package format v2):
+//   dataOffset           Byte offset of this entry's stored bytes within the data
+//                        section. Entries chain: entry[i+1].dataOffset ==
+//                        entry[i].dataOffset + entry[i].assetSize.
+//   assetSize            Number of bytes physically stored at dataOffset (i.e. the
+//                        post-compression size). This is what the loader reads off disk.
+//   compressionAlgorithm Codec for the stored bytes. Matches Next::Compression::Algorithm:
+//                        0 = None, 1 = Zstd, 2 = LZ4. None means stored uncompressed.
+//   compressedSize       When compressed, equals assetSize (the stored compressed byte
+//                        count); 0 when uncompressed.
+//   decompressedSize     Logical asset blob size (AssetHeader + type header + payload)
+//                        after decompression; equals assetSize when uncompressed.
 struct AssetEntry {
     AssetType assetType;
-    uint32_t assetSize;
-    uint32_t dataOffset;      // Relative to data section
-    uint32_t compressedSize;  // 0 = uncompressed
-    uint32_t decompressedSize;
-    char name[64];            // Asset name
+    uint32_t assetSize;            // bytes stored on disk (post-compression)
+    uint32_t dataOffset;           // relative to data section
+    uint32_t compressionAlgorithm; // Next::Compression::Algorithm (0=None, 1=Zstd, 2=LZ4)
+    uint32_t compressedSize;       // == assetSize when compressed, 0 when uncompressed
+    uint32_t decompressedSize;     // logical size; == assetSize when uncompressed
+    char name[64];                 // Asset name
 };
 
 // Utility helpers

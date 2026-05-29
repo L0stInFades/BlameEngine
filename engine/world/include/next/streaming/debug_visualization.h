@@ -1,6 +1,6 @@
 #pragma once
 
-#include "next/renderer/math/math.h"
+#include "next/math/math.h"
 #include "next/streaming/world_partition.h"
 #include "next/streaming/streaming_manager.h"
 #include <vector>

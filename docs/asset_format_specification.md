@@ -101,32 +101,59 @@ Packages are used to bundle multiple assets for efficient streaming:
 ```
 struct PackageHeader {
     uint32_t magic;           // 'NPKG' (0x4E504B47)
-    uint32_t version;         // Package format version (starting at 1)
+    uint32_t version;         // Package format version (currently 2)
     uint32_t assetCount;      // Number of assets in package
     uint32_t indexOffset;     // Offset to asset index table
     uint32_t dataOffset;      // Offset to asset data section
-    uint64_t checksum;        // CRC64 of entire package
+    uint64_t checksum;        // CRC64 of everything after the PackageHeader
     char name[64];            // Package name
 };
 
 struct AssetEntry {
     uint32_t assetType;
-    uint32_t assetSize;
-    uint32_t dataOffset;      // Relative to data section start
-    uint32_t compressedSize;  // 0 = uncompressed
-    uint32_t decompressedSize;
-    char name[64];            // Asset name
+    uint32_t assetSize;            // bytes physically stored at dataOffset (post-compression)
+    uint32_t dataOffset;           // relative to data section start
+    uint32_t compressionAlgorithm; // 0 = None, 1 = Zstd, 2 = LZ4 (Next::Compression::Algorithm)
+    uint32_t compressedSize;       // == assetSize when compressed, 0 when uncompressed
+    uint32_t decompressedSize;     // logical blob size; == assetSize when uncompressed
+    char name[64];                 // Asset name
 };
 
 // Package layout:
 // 1. PackageHeader
-// 2. Asset data section (starting at dataOffset)
-// 3. Asset index table (starting at indexOffset)
+// 2. Asset index table (starting at indexOffset)
+// 3. Asset data section (starting at dataOffset)
+//
+// Size-field invariants:
+//  - Entries chain: entry[i+1].dataOffset == entry[i].dataOffset + entry[i].assetSize.
+//  - Uncompressed: compressionAlgorithm == 0, compressedSize == 0, decompressedSize == assetSize.
+//  - Compressed:   compressionAlgorithm != 0, compressedSize == assetSize, decompressedSize is
+//                  the size after decompression. The loader decompresses transparently on read.
 ```
+
+### Per-Entry Compression
+
+The asset compiler (`next_assetc`) compresses each blob independently. `CreatePackage` takes a
+mode: `auto` (default — try LZ4, keep the compressed bytes only if strictly smaller), `none`,
+`lz4`, or `zstd`. The runtime `PackageContainer::ReadAssetData` decompresses transparently using
+`compressionAlgorithm`; callers always receive the full logical blob. If a package declares a codec
+that is unavailable in the current build, the loader rejects it.
+
+### Package Manifest Sidecar
+
+Alongside each `<name>.npkg`, the compiler emits a queryable `<name>.npkg.manifest.json` describing
+the package: per-asset `id`, `type`, `compression`, `dataOffset`, `storedBytes`, `decompressedBytes`,
+and forward `dependencies` (e.g. a material's referenced textures), plus package totals and
+`warnings` (currently: a referenced asset not present in the package — a soft warning, since it may
+be provided by another package loaded at runtime). The per-asset `id` is `CRC64("<package-stem>::<name>")`,
+which is exactly the stable id the runtime `AssetManager` assigns — so the manifest bridges offline
+cook identity and runtime handle identity.
 
 ## Versioning and Migration
 
 All formats include a version number. Migration scripts should be provided for each version bump. Format changes should be backward compatible when possible.
+
+**Package format v1 → v2:** `AssetEntry` gained `compressionAlgorithm` (changing the index stride) and entries may now be LZ4/Zstd compressed. The loader rejects v1 packages; the migration path is to re-cook from source (`next_assetc test <dir>` or `next_assetc package …`). This follows the "binary cache is regenerable from human-readable source" principle — the `.npkg` is a build artifact, not a source of truth.
 
 ## Validation
 

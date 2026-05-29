@@ -962,6 +962,49 @@ TEST_F(AssetRuntimeLoadTest, ConcurrentSyncLoadsShareSingleCacheEntry) {
     AssetManager::Instance().UnloadPackage(packagePath_.stem().string());
 }
 
+TEST_F(AssetRuntimeLoadTest, AssetIdIsStableAcrossUnloadAndReload) {
+    constexpr const char* kAssetName = "ReloadTexture";
+    const std::array<uint8_t, 16> pixels = {0x10, 0x20, 0x30, 0xff,
+                                            0x40, 0x50, 0x60, 0xff,
+                                            0x70, 0x80, 0x90, 0xff,
+                                            0xa0, 0xb0, 0xc0, 0xff};
+
+    packagePath_ = MakeTempPackagePath("asset_reload_stable_id");
+    ASSERT_TRUE(WriteSingleTexturePackage(packagePath_, kAssetName, pixels));
+
+    const std::string packageName = packagePath_.stem().string();
+    const std::string qualifiedName = packageName + "::" + kAssetName;
+
+    ASSERT_TRUE(AssetManager::Instance().LoadPackage(packagePath_.string()));
+    const AssetHandle first = AssetManager::Instance().LoadAssetSync(qualifiedName);
+    ASSERT_TRUE(first.IsValid());
+    const uint64_t firstId = first.GetID();
+
+    // Fully evict: drop the asset's reference, then unload the package (which GCs assets
+    // whose refcount has reached zero), so the reload re-creates a brand-new AssetData.
+    AssetManager::Instance().Release(first);
+    AssetManager::Instance().UnloadPackage(packageName);
+    EXPECT_FALSE(AssetManager::Instance().IsAssetLoaded(qualifiedName));
+
+    ASSERT_TRUE(AssetManager::Instance().LoadPackage(packagePath_.string()));
+    const AssetHandle second = AssetManager::Instance().LoadAssetSync(qualifiedName);
+    ASSERT_TRUE(second.IsValid());
+
+    // The reloaded asset must keep the same id so any system still holding `firstId`
+    // transparently resolves the new payload -- the precondition for hot-reload.
+    EXPECT_EQ(second.GetID(), firstId);
+
+    // And the id must be the content hash of the canonical storage key.
+    uint64_t expected = CalculateCRC64(qualifiedName.data(), qualifiedName.size());
+    if (expected == 0) {
+        expected = ~0ull;
+    }
+    EXPECT_EQ(firstId, expected);
+
+    AssetManager::Instance().Release(second);
+    AssetManager::Instance().UnloadPackage(packageName);
+}
+
 TEST_F(AssetRuntimeLoadTest, AsyncLoadFailureQueuesFailureCallbackAndClearsPendingState) {
     const std::string missingName = "missing_package::MissingTexture";
     const size_t failedLoadsBefore = AssetManager::Instance().GetStats().failedLoads;

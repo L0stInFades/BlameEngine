@@ -70,3 +70,7 @@ Thumbs.db
 *.suo
 *.userosscache
 *.sln.docstates
+
+# Local agent/session state (Claude Code) — machine-local, never commit
+.claude/scheduled_tasks.lock
+.claude/*.local.*

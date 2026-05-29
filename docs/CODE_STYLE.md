@@ -1,6 +1,7 @@
-# NEXT Engine Code Style Guide
+# Blame Engine Code Style Guide
 
-This document outlines the coding standards and style guidelines for the NEXT engine codebase.
+This document outlines the coding standards and style guidelines for the Blame Engine codebase.
+(Code symbols still use the `NEXT`/`Next` token — see brand-vs-symbol note in [`ENGINEERING_HANDBOOK.md`](ENGINEERING_HANDBOOK.md).)
 
 ## File Naming
 

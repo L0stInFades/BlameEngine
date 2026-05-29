@@ -21,5 +21,8 @@ if(NOT MSVC)
     )
 endif()
 
+# Project warning baseline (-Wall -Wextra; -Werror when NEXT_WARNINGS_AS_ERRORS=ON).
+next_apply_warnings(next_runtime)
+
 # Asset runtime module (CP3)
 add_subdirectory(asset)

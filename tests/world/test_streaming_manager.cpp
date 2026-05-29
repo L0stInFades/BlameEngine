@@ -2410,3 +2410,95 @@ TEST(WorldStreaming, EvictsWhenOverBudget) {
 
     mgr.Shutdown();
 }
+
+TEST(WorldStreaming, LoadStartBudgetLimitsNewLoadsPerFrame) {
+    using namespace Next::Streaming;
+    using Next::Vec3;
+
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path() / "next_stream_loadstart_budget";
+    fs::remove_all(tmp);
+    const std::array<CellCoord, 4> coords = {{{0, 0}, {1, 0}, {0, 1}, {1, 1}}};
+    for (const CellCoord& c : coords) {
+        WriteCellFile(tmp, c.x, c.z, 2048);
+    }
+
+    StreamingManager mgr;
+    StreamingManagerConfig cfg;
+    cfg.memoryBudgetMB = 64;
+    cfg.loadRadius = 0.0f;          // don't auto-queue cells by proximity
+    cfg.unloadRadius = 100000.0f;   // and don't auto-unload the requested cells
+    cfg.enablePrediction = false;
+    cfg.maxConcurrentLoads = 16;    // concurrency is not the limiter here...
+    cfg.maxLoadStartsPerFrame = 1;  // ...the per-frame admission budget is
+    cfg.cellDataDirectory = tmp.wstring();
+    cfg.allowPlaceholderCellLoad = false;
+    ASSERT_TRUE(mgr.Initialize(cfg));
+
+    for (const CellCoord& c : coords) {
+        mgr.LoadCell(c, 1.0f);
+    }
+
+    // Four loads are queued, but a single Update may start only one read+decompress pipeline.
+    mgr.Update(0.016f, Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 0.0f, -1.0f), Vec3(0.0f, 0.0f, 0.0f));
+    EXPECT_EQ(mgr.GetStatistics().loadStartsThisFrame, 1u);
+
+    mgr.Shutdown();
+    fs::remove_all(tmp);
+}
+
+TEST(WorldStreaming, UploadByteBudgetLimitsCommittedCellsPerFrame) {
+    using namespace Next::Streaming;
+    using Next::Vec3;
+
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path() / "next_stream_upload_budget";
+    fs::remove_all(tmp);
+    const std::array<CellCoord, 5> coords = {{{0, 0}, {1, 0}, {0, 1}, {1, 1}, {2, 0}}};
+    for (const CellCoord& c : coords) {
+        WriteCellFile(tmp, c.x, c.z, 4096);
+    }
+
+    StreamingManager mgr;
+    StreamingManagerConfig cfg;
+    cfg.memoryBudgetMB = 64;
+    cfg.loadRadius = 0.0f;
+    cfg.unloadRadius = 100000.0f;
+    cfg.enablePrediction = false;
+    cfg.maxConcurrentLoads = 16;     // let every cell read+decompress concurrently...
+    cfg.maxUploadBytesPerFrame = 1;  // ...but commit at most one (1 byte < any cell) per frame
+    cfg.cellDataDirectory = tmp.wstring();
+    cfg.allowPlaceholderCellLoad = false;
+    ASSERT_TRUE(mgr.Initialize(cfg));
+
+    for (const CellCoord& c : coords) {
+        mgr.LoadCell(c, 1.0f);
+    }
+
+    auto loadedCount = [&]() {
+        uint32_t n = 0;
+        for (const CellCoord& c : coords) {
+            if (mgr.IsCellLoaded(c)) {
+                ++n;
+            }
+        }
+        return n;
+    };
+
+    uint32_t prev = 0;
+    for (int i = 0; i < 800 && loadedCount() < coords.size(); ++i) {
+        mgr.Update(0.016f, Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 0.0f, -1.0f), Vec3(0.0f, 0.0f, 0.0f));
+        const uint32_t now = loadedCount();
+        // Under a sub-cell upload budget, at most one cell may commit per frame, regardless
+        // of how many async loads finished decompressing this frame.
+        EXPECT_LE(now - prev, 1u);
+        prev = now;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    // The budget defers commits; it never drops them. Everything loads eventually.
+    EXPECT_EQ(loadedCount(), static_cast<uint32_t>(coords.size()));
+
+    mgr.Shutdown();
+    fs::remove_all(tmp);
+}

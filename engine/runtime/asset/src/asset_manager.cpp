@@ -519,7 +519,14 @@ AssetHandle AssetManager::LoadAssetSync(const std::string& assetName) {
     }
 
     std::shared_ptr<AssetData> data;
-    uint64_t id = nextAssetID_++;
+    // Stable content identity: the id is a hash of the canonical storage key, so the same
+    // asset always resolves to the same id -- including across an unload/reload. Systems
+    // holding a handle therefore keep it valid and transparently pick up a hot-reloaded
+    // payload, which is the precondition for hot-reload in a real-code game with a live editor.
+    uint64_t id = CalculateCRC64(storageKey.data(), storageKey.size());
+    if (id == 0) {
+        id = ~0ull; // 0 is reserved for the invalid handle; remap the (effectively impossible) hash-zero.
+    }
 
     switch (commonHeader.assetType) {
         case AssetType::Mesh: {
@@ -611,6 +618,17 @@ AssetHandle AssetManager::LoadAssetSync(const std::string& assetName) {
         NEXT_LOG_DEBUG("Asset already loaded after IO race: %s (refcount: %u)",
                        storageKey.c_str(), existingIt->second->GetRefCount());
         return AssetHandle(existingIt->second->GetID(), existingIt->second.get());
+    }
+
+    // Guard against an (astronomically unlikely) hash collision: a different asset whose
+    // canonical key hashes to the same id. Reject loudly rather than silently shadowing it.
+    auto idCollision = idToName_.find(id);
+    if (idCollision != idToName_.end() && idCollision->second != storageKey) {
+        NEXT_LOG_ERROR("Asset id hash collision: '%s' and '%s' map to id %llu; rename one asset.",
+                       idCollision->second.c_str(), storageKey.c_str(),
+                       static_cast<unsigned long long>(id));
+        failedLoads_++;
+        return AssetHandle();
     }
 
     data->AddRef(); // Initial reference

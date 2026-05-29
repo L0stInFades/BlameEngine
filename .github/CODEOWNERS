@@ -1,0 +1,45 @@
+# CODEOWNERS — paths -> reviewers, auto-requested on PRs that touch them.
+# Owners are responsible for their area's API stability and quality bar.
+# NOTE: replace the @org/* placeholders below with real GitHub teams/handles.
+
+# --- Engine core ---
+/engine/foundation/        @org/engine-core
+/engine/platform/          @org/engine-core
+/engine/jobsystem/         @org/engine-core
+/engine/profiler/          @org/engine-core
+/engine/serialization/     @org/engine-core
+/engine/compression/       @org/engine-core
+/engine/runtime/           @org/engine-core
+
+# --- Rendering & physics are EXTERNAL (ADR-0005): UE5 + Jolt. No in-repo renderer/RHI. ---
+# The sim↔UE5 boundary (flat C-ABI snapshot/command headers) is owned by engine-core.
+
+# --- World / streaming ---
+/engine/world/             @org/world
+
+# --- Gameplay-facing engine systems ---
+/engine/script/            @org/gameplay
+/engine/task/              @org/gameplay
+
+# --- HackOps / terminal tech line ---
+/engine/terminal/          @org/hackops
+
+# --- Tools ---
+/tools/                    @org/tools
+
+# --- Games (engine consumers; engine team reviews boundary, game team owns content) ---
+/game/                     @org/game-teams
+
+# --- Build / CI / quality / governance ---
+/CMakeLists.txt            @org/engine-core
+/CMakePresets.json         @org/engine-core
+/cmake/                    @org/engine-core
+/.github/                  @org/engine-core
+/.clang-format             @org/engine-core
+/.clang-tidy               @org/engine-core
+/scripts/                  @org/engine-core
+
+# --- Docs governance ---
+/docs/                     @org/engine-core
+/CONTRIBUTING.md           @org/engine-core
+/GETTING_STARTED.md        @org/engine-core

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(NEXTEngine
+project(BlameEngine
     VERSION 0.1.0
-    DESCRIPTION "NEXT Self-Hosted Engine - Song Dynasty Project"
+    DESCRIPTION "Blame Engine - company core game engine (headless authoritative world + UE5 view)"
     LANGUAGES CXX
 )
 
@@ -25,18 +25,17 @@ endif()
 
 # Build options
 option(BUILD_TOOLS "Build tools" ON)
-option(BUILD_GAME "Build game" ON)
 option(BUILD_TESTS "Build tests" ON)
-
-set(NEXT_DEFAULT_BUILD_RENDERER OFF)
-if(WIN32 OR APPLE)
-    set(NEXT_DEFAULT_BUILD_RENDERER ON)
-endif()
-option(BUILD_RENDERER "Build the platform renderer backend" ${NEXT_DEFAULT_BUILD_RENDERER})
-option(BUILD_EDITOR "Build the editor tool" ON)
-option(BUILD_TERMINAL "Build Neovim terminal/editor integration" ON)
+option(BUILD_TERMINAL "Build Neovim terminal integration" ON)
 option(BUILD_GAME_HACKOPS "Build HackOps prototype game target" OFF)
 option(BUILD_LEGACY_LOG "Build deprecated next_log compatibility module" OFF)
+
+# Rendering and physics are EXTERNAL (ADR-0005): rendering = UE5, physics = Jolt.
+# This repo is the headless authoritative-world core; it does NOT build a renderer or RHI.
+
+# Code-quality toggles (sanitizers, strict warnings, clang-tidy). Must be included
+# before add_subdirectory so global sanitizer flags reach every target.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/NextQuality.cmake)
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -56,23 +55,12 @@ add_subdirectory(engine/foundation)
 if(BUILD_LEGACY_LOG)
     add_subdirectory(engine/log)
 endif()
-add_subdirectory(engine/serialization)      # 序列化系统
+add_subdirectory(engine/serialization)
 add_subdirectory(engine/platform)
 add_subdirectory(engine/compression)
-add_subdirectory(engine/rhi)
 add_subdirectory(engine/runtime)
-if(BUILD_RENDERER)
-    add_subdirectory(engine/renderer)
-else()
-    message(STATUS "BUILD_RENDERER=OFF: skipping DX12 renderer")
-endif()
 add_subdirectory(engine/profiler)
 add_subdirectory(engine/jobsystem)
-if(BUILD_RENDERER)
-    add_subdirectory(engine/game)
-else()
-    message(STATUS "BUILD_RENDERER=OFF: skipping engine/game camera-feel module")
-endif()
 if(BUILD_TERMINAL)
     add_subdirectory(engine/terminal)
 endif()
@@ -90,12 +78,6 @@ add_subdirectory(engine/task)      # CP9: Task System
 if(BUILD_TOOLS)
     add_subdirectory(tools/assetc)
     add_subdirectory(tools/compression_probe)
-    if(BUILD_EDITOR AND BUILD_RENDERER AND WIN32)
-        add_subdirectory(third_party/imgui)
-        add_subdirectory(tools/editor)
-    elseif(BUILD_EDITOR)
-        message(STATUS "Skipping next_editor: requires BUILD_RENDERER=ON and WIN32")
-    endif()
     if(BUILD_TERMINAL)
         add_subdirectory(tools/nvim_surface_cpp_probe)
     endif()
@@ -107,14 +89,6 @@ if(BUILD_GAME_HACKOPS)
         add_subdirectory(game/hackops)
     else()
         message(FATAL_ERROR "BUILD_GAME_HACKOPS=ON requires BUILD_TERMINAL=ON")
-    endif()
-endif()
-
-if(BUILD_GAME)
-    if(BUILD_RENDERER)
-        add_subdirectory(game/song)
-    else()
-        message(STATUS "Skipping song_demo: requires BUILD_RENDERER=ON")
     endif()
 endif()
 

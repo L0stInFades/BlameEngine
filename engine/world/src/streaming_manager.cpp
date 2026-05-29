@@ -476,6 +476,13 @@ void StreamingManager::Update(float deltaTime, const Vec3& cameraPosition, const
     currentFrame_++;
     elapsedTime_ += deltaTime;
 
+    // Reset per-frame scheduler-budget counters. These accumulate across the queue/commit
+    // passes below (including the headless-mode second completion drain), so they must be
+    // cleared once at the frame boundary rather than inside those passes.
+    stats_.uploadBytesThisFrame = 0;
+    stats_.loadStartsThisFrame = 0;
+    stats_.budgetDeferredCells = 0;
+
     lastCameraPosition_ = cameraPosition;
     lastCameraDirection_ = cameraDirection;
     lastCameraVelocity_ = cameraVelocity;
@@ -545,7 +552,25 @@ void StreamingManager::ProcessCellOpCompletions() {
         local.swap(completions_);
     }
 
-    for (const CellOpCompletion& c : local) {
+    const uint64_t uploadBudget = config_.maxUploadBytesPerFrame;
+    std::vector<CellOpCompletion> deferred;
+
+    for (size_t completionIndex = 0; completionIndex < local.size(); ++completionIndex) {
+        CellOpCompletion& c = local[completionIndex];
+
+        // Per-frame commit/upload byte budget: once this frame's budget is spent, defer the
+        // remaining successful loads to a later frame so committing a burst of completions
+        // can't stall the main thread. Always allow at least one commit per frame (when
+        // uploadBytesThisFrame == 0) so forward progress is guaranteed even for a large cell.
+        if (c.isLoad && c.success && uploadBudget != 0 &&
+            stats_.uploadBytesThisFrame != 0 &&
+            stats_.uploadBytesThisFrame + c.bytes > uploadBudget) {
+            for (size_t j = completionIndex; j < local.size(); ++j) {
+                deferred.push_back(std::move(local[j]));
+            }
+            break;
+        }
+
         CellData* cell = worldPartition_ ? worldPartition_->GetCell(c.coord) : nullptr;
 
         if (c.isLoad) {
@@ -619,6 +644,7 @@ void StreamingManager::ProcessCellOpCompletions() {
             cell->metadata.SetLayerPresent(CellLayer::StaticMesh);
             worldPartition_->UpdateCellState(c.coord, CellLoadState::Loaded);
             evictionPolicy_->RecordAccess(c.coord, currentFrame_);
+            stats_.uploadBytesThisFrame += c.bytes;
         } else {
             activeUnloadOperations_.erase(c.coord);
             cellToPackageName_.erase(c.coord);
@@ -634,6 +660,16 @@ void StreamingManager::ProcessCellOpCompletions() {
             cell->isPlaceholderData = false;
             worldPartition_->UpdateCellState(c.coord, CellLoadState::Unloaded);
         }
+    }
+
+    // Re-queue any completions deferred by the upload budget so they commit on a later frame.
+    if (!deferred.empty()) {
+        stats_.budgetDeferredCells += static_cast<uint32_t>(deferred.size());
+        std::lock_guard<std::mutex> lock(completionMutex_);
+        for (CellOpCompletion& existing : completions_) {
+            deferred.push_back(std::move(existing));
+        }
+        completions_.swap(deferred);
     }
 }
 
@@ -1239,6 +1275,16 @@ void StreamingManager::Shutdown() {
         return;
     }
 
+    // Join the async IO worker threads up front. UnloadAll() and the buffer cleanup below
+    // free the read buffers that IO workers may still be reading into, and request
+    // cancellation is only best-effort (it does not guarantee a worker has stopped touching
+    // a buffer). Stopping the threads first prevents a shutdown-time heap-use-after-free
+    // when a load is still in flight. asyncIO_->Shutdown() is idempotent; the asyncIO_.reset()
+    // further below destroys the now-quiesced system.
+    if (asyncIO_) {
+        asyncIO_->Shutdown();
+    }
+
     UnloadAll();
 
     // Shutdown sub-systems
@@ -1427,12 +1473,19 @@ void StreamingManager::ProcessLoadQueue() {
         if (inflight >= config_.maxConcurrentLoads) {
             break;
         }
+        // Per-frame admission budget: bound how many new read+decompress pipelines we kick
+        // off in a single frame so a large queue can't submit a thundering herd at once.
+        if (config_.maxLoadStartsPerFrame != 0 &&
+            stats_.loadStartsThisFrame >= config_.maxLoadStartsPerFrame) {
+            break;
+        }
         if (activeLoadOperations_.count(request.coord) != 0) {
             continue;
         }
 
         ProcessCellLoad(request);
         started.push_back(request.coord);
+        stats_.loadStartsThisFrame++;
         inflight = activeLoadOperations_.size();
     }
 

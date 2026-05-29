@@ -372,8 +372,7 @@ private:
         AssetLoadCallback callback;
     };
     std::vector<CompletedAssetLoad> completedLoads_;
-    std::atomic<uint64_t> nextAssetID_{1};
-    
+
     // Statistics
     std::atomic<size_t> loadedAssetsCount_{0};
     std::atomic<size_t> totalMemory_{0};

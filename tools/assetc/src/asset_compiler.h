@@ -19,10 +19,13 @@ public:
                      const std::string& outputPath,
                      const std::string& compression = "none");
     
-    // Create package from compiled assets
+    // Create package from compiled assets.
+    // compression: "auto" (compress each blob, keep if strictly smaller), "none",
+    // "lz4", or "zstd". Defaults to "auto".
     bool CreatePackage(const std::string& packageName,
                       const std::vector<std::string>& assetFiles,
-                      const std::string& outputPath);
+                      const std::string& outputPath,
+                      const std::string& compression = "auto");
     
     // Generate test assets for CP3
     bool GenerateTestAssets(const std::string& outputDir);

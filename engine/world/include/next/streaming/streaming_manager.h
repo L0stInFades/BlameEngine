@@ -87,6 +87,12 @@ struct StreamingStatistics {
     uint32_t timeoutErrors = 0;
     uint32_t placeholderCells = 0;
 
+    // Per-frame scheduler-budget accounting (see StreamingManagerConfig budgets). These
+    // describe the most recent Update() frame.
+    uint64_t uploadBytesThisFrame = 0;   // cell bytes committed/uploaded during the last Update
+    uint32_t loadStartsThisFrame = 0;    // load pipelines started during the last Update
+    uint32_t budgetDeferredCells = 0;    // completions deferred by the upload budget last Update
+
     uint64_t PendingCellCount() const {
         return static_cast<uint64_t>(loadingCells) + static_cast<uint64_t>(queuedCells);
     }
@@ -182,6 +188,13 @@ struct StreamingManagerConfig {
     uint32_t maxConcurrentLoads = 16;
     uint32_t maxConcurrentUnloads = 8;
     bool prioritizeVisibleCells = true;
+
+    // Per-frame scheduler budgets (0 = unlimited). These bound the main-thread work a single
+    // Update() commits, so a burst of async completions can't stall the terminal/UI thread.
+    // maxConcurrentLoads already bounds in-flight decompression; these bound per-frame commit
+    // throughput (bytes uploaded to memory/GPU) and how many new pipelines start per frame.
+    uint64_t maxUploadBytesPerFrame = 0; // cap on cell bytes committed/uploaded per frame
+    uint32_t maxLoadStartsPerFrame = 0;  // cap on new load (read+decompress) pipelines started per frame
 
     // Debug settings
     bool enableProfiling = true;

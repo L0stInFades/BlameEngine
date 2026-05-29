@@ -7,43 +7,37 @@
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/out/build/terminal-dev",
       "cacheVariables": {
-        "BUILD_RENDERER": "OFF",
         "BUILD_TOOLS": "ON",
-        "BUILD_EDITOR": "OFF",
-        "BUILD_GAME": "OFF",
         "BUILD_GAME_HACKOPS": "ON",
         "BUILD_TESTS": "OFF",
         "BUILD_TERMINAL": "ON"
       }
     },
     {
-      "name": "windows-dx12-dev",
-      "displayName": "Windows DX12 Song/editor development",
-      "generator": "Visual Studio 17 2022",
-      "architecture": "x64",
-      "binaryDir": "${sourceDir}/out/build/windows-dx12-dev",
+      "name": "headless",
+      "displayName": "Headless authoritative-world core (no renderer, no game)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/out/build/headless",
       "cacheVariables": {
-        "BUILD_RENDERER": "ON",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "BUILD_TOOLS": "ON",
-        "BUILD_EDITOR": "ON",
-        "BUILD_GAME": "ON",
+        "BUILD_GAME_HACKOPS": "OFF",
         "BUILD_TESTS": "ON",
-        "BUILD_TERMINAL": "ON"
+        "BUILD_TERMINAL": "OFF"
       }
     },
     {
-      "name": "macos-metal-dev",
-      "displayName": "macOS Metal Song development",
+      "name": "asan",
+      "displayName": "ASan + UBSan test build (macOS/Linux)",
       "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/out/build/macos-metal-dev",
+      "binaryDir": "${sourceDir}/out/build/asan",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "BUILD_RENDERER": "ON",
-        "BUILD_TOOLS": "OFF",
-        "BUILD_EDITOR": "OFF",
-        "BUILD_GAME": "ON",
-        "BUILD_TESTS": "OFF",
-        "BUILD_TERMINAL": "OFF"
+        "NEXT_SANITIZE": "address,undefined",
+        "BUILD_TESTS": "ON",
+        "BUILD_TOOLS": "ON",
+        "BUILD_TERMINAL": "OFF",
+        "BUILD_GAME_HACKOPS": "OFF"
       }
     }
   ],
@@ -58,16 +52,12 @@
       ]
     },
     {
-      "name": "windows-dx12-dev",
-      "configurePreset": "windows-dx12-dev",
-      "configuration": "Debug"
+      "name": "headless",
+      "configurePreset": "headless"
     },
     {
-      "name": "macos-metal-dev",
-      "configurePreset": "macos-metal-dev",
-      "targets": [
-        "song_demo"
-      ]
+      "name": "asan",
+      "configurePreset": "asan"
     }
   ]
 }

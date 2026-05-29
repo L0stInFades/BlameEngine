@@ -1,0 +1,33 @@
+# NEXT engine formatting — tuned to the EXISTING code style (4-space, 120 col,
+# attached/K&R braces, pointer-left). Goal: ~no-op on current code, enforce forward.
+---
+Language: Cpp
+BasedOnStyle: Google
+Standard: c++17
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+
+AccessModifierOffset: -4
+NamespaceIndentation: None
+IndentCaseLabels: true
+
+PointerAlignment: Left
+DerivePointerAlignment: false
+
+BreakBeforeBraces: Attach
+SpaceAfterTemplateKeyword: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+Cpp11BracedListStyle: true
+SpaceAfterCStyleCast: false
+
+# Don't reorder includes — the codebase groups them by hand and reordering would
+# create large, meaningless diffs.
+SortIncludes: Never
+SortUsingDeclarations: false
+...

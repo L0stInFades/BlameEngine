@@ -1,0 +1,80 @@
+{
+  "package": "TestPackage",
+  "formatVersion": 2,
+  "assetCount": 7,
+  "totalStoredBytes": 2072,
+  "totalDecompressedBytes": 2072,
+  "assets": [
+    {
+      "name": "TestCube",
+      "id": "6160947955332035918",
+      "type": "Mesh",
+      "compression": "none",
+      "dataOffset": 0,
+      "storedBytes": 480,
+      "decompressedBytes": 480,
+      "dependencies": []
+    },
+    {
+      "name": "TestChecker",
+      "id": "13420398561593699628",
+      "type": "Texture",
+      "compression": "none",
+      "dataOffset": 480,
+      "storedBytes": 184,
+      "decompressedBytes": 184,
+      "dependencies": []
+    },
+    {
+      "name": "DefaultNormal",
+      "id": "17870624861699638884",
+      "type": "Texture",
+      "compression": "none",
+      "dataOffset": 664,
+      "storedBytes": 184,
+      "decompressedBytes": 184,
+      "dependencies": []
+    },
+    {
+      "name": "DefaultMetallicRoughness",
+      "id": "11286830217193721315",
+      "type": "Texture",
+      "compression": "none",
+      "dataOffset": 848,
+      "storedBytes": 184,
+      "decompressedBytes": 184,
+      "dependencies": []
+    },
+    {
+      "name": "DefaultEmissive",
+      "id": "13470164885372317105",
+      "type": "Texture",
+      "compression": "none",
+      "dataOffset": 1032,
+      "storedBytes": 184,
+      "decompressedBytes": 184,
+      "dependencies": []
+    },
+    {
+      "name": "DefaultOcclusion",
+      "id": "6931636681133329760",
+      "type": "Texture",
+      "compression": "none",
+      "dataOffset": 1216,
+      "storedBytes": 184,
+      "decompressedBytes": 184,
+      "dependencies": []
+    },
+    {
+      "name": "TestPBR",
+      "id": "13594702370390633742",
+      "type": "Material",
+      "compression": "none",
+      "dataOffset": 1400,
+      "storedBytes": 672,
+      "decompressedBytes": 672,
+      "dependencies": ["TestChecker", "DefaultNormal", "DefaultMetallicRoughness", "DefaultEmissive", "DefaultOcclusion"]
+    }
+  ],
+  "warnings": []
+}

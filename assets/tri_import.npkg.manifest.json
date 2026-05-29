@@ -1,0 +1,20 @@
+{
+  "package": "tri_import",
+  "formatVersion": 2,
+  "assetCount": 1,
+  "totalStoredBytes": 103,
+  "totalDecompressedBytes": 254,
+  "assets": [
+    {
+      "name": "tri_import",
+      "id": "3810982311425909119",
+      "type": "Mesh",
+      "compression": "lz4",
+      "dataOffset": 0,
+      "storedBytes": 103,
+      "decompressedBytes": 254,
+      "dependencies": []
+    }
+  ],
+  "warnings": []
+}
