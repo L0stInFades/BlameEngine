@@ -19,6 +19,7 @@
 | 缺口 | 说明 | 粗估 |
 |---|---|---|
 | **AI-agent 工具面** | 把 Game API 以工具协议(MCP 式)暴露给 agent,帮玩家排任务/hack | 数周 |
+| **复活 `engine/ops`(Ops Runtime 雏形)** | 旧 master 线有 ~1275 LOC 的 `ops_workspace`/`policy_simulation`/`python_worker`(沙箱化玩家代码执行的早期雏形),分支收敛时未移植;评估并把仍适用的逻辑迁到新 archetype ECS,作为 WASM 沙箱的参考/前身。来源:tag `archive/pre-blame`([ADR-0004](adr/0004-branch-consolidation.md)) | 数周 |
 | 玩家代码编辑 UX 接入 UE5 | Neovim 表面嵌入 UE5(或伴随窗口) | 数周 |
 | 确定性 | 玩家代码 + Jolt 驱动权威状态需可回放/反作弊;从设计起保证 | 持续 |
 | 服务器权威 / 网络 | sim 出进程成为专用权威服务器 + UE5 客户端 | 月 |
@@ -42,4 +43,4 @@
 - 自研物理 → **Jolt**。
 
 ## 本轮已清偿(2026-05)
-- 资产压缩端到端、`.npkg` v2 + 内容哈希 ID + 依赖 manifest;ECS 重写为 archetype 数据导向([ADR-0002](adr/0002-archetype-ecs.md));流送每帧预算;工业级质量工具链([ADR-0003](adr/0003-quality-gates.md),并修复了一个关机期 UAF);文档重构为"公司核心资产、多游戏"结构([ADR-0001](adr/0001-engine-is-company-core-asset.md));确立 UE5+Jolt+headless 战略([ADR-0005](adr/0005-ue5-renderer-jolt-headless-world.md))。
+- 资产压缩端到端、`.npkg` v2 + 内容哈希 ID + 依赖 manifest;ECS 重写为 archetype 数据导向([ADR-0002](adr/0002-archetype-ecs.md));流送每帧预算;工业级质量工具链([ADR-0003](adr/0003-quality-gates.md),并修复了一个关机期 UAF);文档重构为"公司核心资产、多游戏"结构([ADR-0001](adr/0001-engine-is-company-core-asset.md));确立 UE5+Jolt+headless 战略([ADR-0005](adr/0005-ue5-renderer-jolt-headless-world.md));收敛远端分支为单一 `master` 主线([ADR-0004](adr/0004-branch-consolidation.md))。

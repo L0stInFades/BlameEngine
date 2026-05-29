@@ -1,6 +1,6 @@
 # 0004. 收敛 `hackops/*` 长期分叉分支
 
-- **Status**: Proposed (需 owner 拍板)
+- **Status**: Accepted（owner 已拍板，2026-05-29 执行完毕）
 - **Date**: 2026-05-29
 
 ## Context
@@ -23,3 +23,13 @@
 ## Alternatives considered
 - 维持现状:被否,债务持续累积、主线不清。
 - 以旧的 ops 分支为主线:被否,会丢失最新引擎硬化与质量工具链。
+
+## 执行记录 (2026-05-29)
+执行时发现一个 Decision 起草时未预见的事实:**`master`(旧两宋线,root `e90957a`)与 `hackops/dev-foundation`(root `92113ad`)历史不相交(无共同祖先)**,无法常规合并。据此调整了步骤 1 的机制(目标不变):
+
+1. **合入方式**:在 dev-foundation 上 `git merge -s ours --allow-unrelated-histories <旧master>`,生成合并提交 `05b975c`——其 tree 即 Blame Engine 内容(与 dev-foundation 完全一致),第二父指向旧 master。再把 `master` **快进**到该提交(无 force-push)。两条历史均可达、**零丢失**。
+2. **旧线保留**:tag `archive/pre-blame` → 旧 master `96df70f`(含 `engine/ops` Ops Runtime ~1275 LOC、旧自研渲染器、`game/song`)。`git cherry` 已确认 `ops-workspace`/`policy-sim`/`python-worker` 三条小分支的提交均已并入旧 master,无独有内容。
+3. **删除**:`hackops/{dev-foundation,ops-workspace,policy-sim,python-worker}` 四条远端分支已删,远端仅余 `master`。本地修正了 single-branch fetch refspec → 标准通配。
+4. **Ops Runtime 移植**(原步骤 2)**未在本次执行**——它需人工核对是否适配新 archetype ECS/资产格式,改记为 [`TECH_DEBT.md`](../TECH_DEBT.md) P1 任务「复活 `engine/ops`」,源在 tag `archive/pre-blame`。
+
+结果:单一可信主线 `master` = 可发布的 Blame Engine 基线;旧资产经 tag + 合并父链可随时取回。

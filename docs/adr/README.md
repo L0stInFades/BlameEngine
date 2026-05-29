@@ -11,6 +11,6 @@
 | [0001](0001-engine-is-company-core-asset.md) | 引擎是公司核心资产(多游戏通用底座) | Accepted |
 | [0002](0002-archetype-ecs.md) | Runtime ECS 采用 archetype 数据导向存储 | Accepted |
 | [0003](0003-quality-gates.md) | 工业级 C++ 质量闸门 | Accepted |
-| [0004](0004-branch-consolidation.md) | 收敛 `hackops/*` 长期分叉分支 | Proposed |
+| [0004](0004-branch-consolidation.md) | 收敛 `hackops/*` 长期分叉分支 | Accepted |
 | [0005](0005-ue5-renderer-jolt-headless-world.md) | 渲染交 UE5 / 物理用 Jolt / 自研 headless 权威世界 + 安全玩家代码运行时 + Game API | Accepted |
 | [0006](0006-sim-ue5-boundary.md) | sim↔UE5 边界:无锁三重缓冲快照流 + 单向命令/事件队列(细节见 [`design/sim-ue5-boundary.md`](../design/sim-ue5-boundary.md)) | Accepted |
