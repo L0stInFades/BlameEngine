@@ -65,6 +65,7 @@
 | **玩家语言前端**(`next_sandbox_wasm`) | **usable**(opt-in) | C++23 / Rust 2024 → wasm32 → wasm3 后端,与字节码 guest 同一套 Game API ABI;A*/二分查找在 headless 世界跑通(`BUILD_WITH_WASM`,[ADR-0011](docs/adr/0011-wasm-language-frontend.md))。**CPU 燃料经加载期 gas 插桩强制**:无限循环 → `FuelExhausted`,不再挂起([ADR-0012](docs/adr/0012-wasm-fuel-gas-metering.md)) |
 | **sim↔UE5 复制层**(`engine/boundary`) | **usable** | wait-free 三重缓冲快照流 + SPSC 命令/事件队列 + ECS 脏集发布器(进程内,[ADR-0006](docs/adr/0006-sim-ue5-boundary.md)) |
 | **物理**(`engine/physics`) | **usable** | `IPhysicsWorld` 抽象 + 确定性参考后端 + ECS `PhysicsSystem`(固定步,写回 Transform);Jolt 为可选后端(`BUILD_WITH_JOLT`,核心 Jolt 无关,[ADR-0009](docs/adr/0009-physics-jolt-backend.md)) |
+| **关卡设计系统**(`engine/level`) | **usable** | 数据驱动关卡:`LevelDef` + 流式构造 + **fail-closed 总校验门** + 事务化确定性加载 + 胜负条件;经多轮 agent workflow 严格 review 闭环修复缺陷,加载关卡→跑沙箱 guest→胜利条件触发端到端跑通([ADR-0013](docs/adr/0013-level-design-system.md)) |
 
 | 护城河 · 待建 | 现状 |
 |---|---|

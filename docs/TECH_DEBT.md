@@ -49,6 +49,11 @@
 - 内容创作工具(场景/材质编辑、FBX/PNG 导入、资产视口) → **UE5 编辑器**。
 - 自研物理 → **Jolt**。
 
+## 本轮已清偿(2026-05-30,关卡设计系统 engine/level)
+- **数据驱动关卡系统**([ADR-0013](adr/0013-level-design-system.md),`next_level`):`LevelDef`(实体/组件/标签/目标/胜负条件,纯数据)+ 流式 `LevelBuilder` + **总校验门** `LevelValidator`(fail-closed,累计全部错误,~32 缺陷码)+ **事务化确定性** `LevelLoader`(校验通过才建,失败 World 不动;向量序 + std::map/set 确定)+ 只读 loss-priority `WinEvaluator`。复用 ECS + gameapi/physics/boundary 组件,**不碰**遗留 Task System。
+- **用用户要求的 agent-workflow 闭环造出**:规划(3 架构师 + 质量骨架)→ 实现 → 严格 review → 修复 → 再 review …… 经 **5 轮对抗式 review 收敛(确认缺陷 9→3→3→2→0)**。review 抓出测试没覆盖的真实缺陷:未约束的 `ref.value` 致 ~32GB 分配、NaN MoveTarget 腐蚀 transform、多个静默永不触发/永不渲染、递归式环检测栈溢出、`LoadedLevel` 悬垂 def 指针(use-after-scope)。
+- 测试:20 个(validator/loader/conditions/端到端 load→跑沙箱 guest→胜利触发);headless + ASan/UBSan 全绿;入 CI(`LevelTest`)。**待补**:序列化/持久化、复合条件树、运行时 spawn。
+
 ## 本轮已清偿(2026-05-30,WASM CPU 燃料计量)
 - **加载期 gas 插桩**([ADR-0012](adr/0012-wasm-fuel-gas-metering.md),`engine/sandbox/wasm_meter.{h,cpp}`):wasm3 无原生燃料钩子,于是在 `LoadModule` 里把模块**改写成自计费**——append-only(不重排既有 func/global 索引)地追加一个导出的可变 i64 `__fuel` 全局 + 一个 `__gas(i32)` 函数(`fuel -= cost; if fuel<0 unreachable`),并在每个函数入口与每个 loop/if/else 头部插入 `i32.const cost; call __gas`。因为结构化 WASM 的每条后向边都指向 `loop` 头、每次调用都重入被计费的函数入口,**没有无界计算能绕过计费点**。host 在调用前用 `m3_SetGlobal` 注入 `SandboxPolicy::fuel`、调用后用 `m3_GetGlobal` 读余量(全局在 trap 后仍存活)→ 精确 `fuelUsed`;`__fuel<=0` 的 `unreachable` 映射为 `FuelExhausted`。无法解析的 opcode(SIMD/atomics)**fail-closed 拒绝**。
 - **实证**(`tools/wasm_demo`):无限循环 guest 现在 `FuelExhausted`(不再挂起);计数循环在充足预算下完成(精确 fuelUsed 随工作量增长)、紧预算下 trap;真实 A*(C++)/二分查找(Rust)经插桩不变、仍通过。ASan 干净(meter 的字节运算无越界)。默认主干不受影响(wasm opt-in;headless 17/17)。
