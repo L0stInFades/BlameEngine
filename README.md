@@ -45,7 +45,7 @@
 
 ## 现状(诚实分级)
 
-地基是真的、有测试;护城河大部分**还没建**。这不是免责声明,是路线图——明确区分 production / prototype / absent 本身就是这份 README 的功能。
+地基是真的、有测试;**护城河的纵切面已经跑通**(2026-05-30):沙箱里的玩家代码经 Game API 改动 headless 权威世界,再经边界出快照——全程无渲染器、可确定性回放、ASan/UBSan 全绿。物理也已接入(`engine/physics`,确定性参考后端 + 可选 Jolt 后端)。仍有待补(玩家语言前端、跨进程/网络、AI-agent 工具面)。这不是免责声明,是路线图——明确区分 production / usable / prototype / absent 本身就是这份 README 的功能。
 
 | 已建成 | 级别 | 说明 |
 |---|---|---|
@@ -58,12 +58,17 @@
 | 世界流送(`engine/world`) | sim 侧保留 | WorldPartition / InterestManager / Prediction / Streaming / AsyncIO / LOD / Eviction |
 | 任务系统(`engine/task`) | **prototype** | 定义/实例/存档存在;条件/动作**未接世界** |
 
-| 护城河 · 待建(P0) | 现状 |
+| 护城河 | 级别 | 说明 |
+|---|---|---|
+| **Game API**(`engine/gameapi`) | **usable** | 能力域化 / 版本化 / 写即意图;三消费者共用的唯一契约([ADR-0007](docs/adr/0007-game-api-contract.md)) |
+| **玩家代码沙箱**(`engine/sandbox`) | **usable** | 安全契约 + `ISandbox` + 自研确定性燃料 VM(零环境权限、能力门控 host-call);替代 `popen(python3)` 的架构,对抗性测试全绿([ADR-0008](docs/adr/0008-player-code-sandbox.md)) |
+| **sim↔UE5 复制层**(`engine/boundary`) | **usable** | wait-free 三重缓冲快照流 + SPSC 命令/事件队列 + ECS 脏集发布器(进程内,[ADR-0006](docs/adr/0006-sim-ue5-boundary.md)) |
+| **物理**(`engine/physics`) | **usable** | `IPhysicsWorld` 抽象 + 确定性参考后端 + ECS `PhysicsSystem`(固定步,写回 Transform);Jolt 为可选后端(`BUILD_WITH_JOLT`,核心 Jolt 无关,[ADR-0009](docs/adr/0009-physics-jolt-backend.md)) |
+
+| 护城河 · 待建 | 现状 |
 |---|---|
-| **Game API**(能力域化契约) | **absent** — 三消费者共用的核心契约 |
-| **WASM 玩家代码沙箱** | **absent** — 今天玩家代码走 `popen(python3)`,**零隔离**;这是安全核心 |
-| **Jolt 物理绑定** | **absent** — 权威、确定性、服务器侧 |
-| **sim↔UE5 复制层** | **absent** — 设计已定([边界文档](docs/design/sim-ue5-boundary.md)),实现待写 |
+| 玩家语言前端 | **absent** — 把玩家的 C/Rust/AssemblyScript 编译到沙箱字节码或 WASM 后端(届时 HackOps 才真正弃用 `popen`) |
+| 跨进程 / 网络 transport | **absent** — 同一份快照数据模型,换 transport 即升级专用服务器 |
 | AI-agent 工具面(P1) | **absent** — 把 Game API 以工具协议暴露给 agent |
 
 逐模块成熟度见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md),已知缺口见 [`docs/TECH_DEBT.md`](docs/TECH_DEBT.md)。

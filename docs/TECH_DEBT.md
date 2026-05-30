@@ -7,13 +7,13 @@
 先把 **headless 世界**做成可玩纵切面(无渲染器),护城河是 **Game API + WASM 玩家代码沙箱**。渲染/物理/内容工具不再是我们的负担(交给 UE5/Jolt)。
 
 ## P0 — 护城河核心(必须自研,要砸好钢)
-| 缺口 | 说明 | 粗估 |
+| 缺口 | 说明 | 状态 |
 |---|---|---|
-| **Game API**(能力域化 / 版本化 / 确定性) | 玩家代码 / AI agent / UE5 视图三者唯一契约;整个架构的中心 | 数周–月,持续演进 |
-| **WASM 玩家代码沙箱** | 玩家写真实代码 + 安全第一:wasmtime 等,宿主只暴露 Game API,燃料/内存限额、无逃逸;替换当前 `popen(python3)` 探针 | 数周 |
-| **Jolt 物理绑定**(权威/确定性/服务器侧) | 接入 headless 世界作为权威物理 | 数周 |
-| **sim↔UE5 状态复制层** | headless 权威状态 → UE5 视图镜像(实体 spawn/despawn、transform/状态、事件→VFX);进程内起步、网络/服务器权威设计 | 数周–月 |
-| **headless 世界规则/状态接线** | 任务条件/动作接真实世界状态;世界状态可查询/可回放 | 数周 |
+| **Game API**(能力域化 / 版本化 / 确定性) | 玩家代码 / AI agent / UE5 视图三者唯一契约;整个架构的中心 | ✅ **v1 落地**(`next_gameapi`,[ADR-0007](adr/0007-game-api-contract.md));随玩法持续演进 |
+| **玩家代码沙箱**(安全第一) | 宿主只暴露 Game API,燃料/内存限额、无逃逸;替换 `popen(python3)` 探针 | ✅ **落地**(`next_sandbox` + 参考 VM,[ADR-0008](adr/0008-player-code-sandbox.md));**待补**:玩家语言前端 / 生产级 WASM 后端 |
+| **sim↔UE5 状态复制层** | headless 权威状态 → UE5 视图镜像;进程内起步、网络/服务器权威设计 | ✅ **进程内落地**(`next_boundary`,[ADR-0006](adr/0006-sim-ue5-boundary.md));**待补**:跨进程 / 网络 transport |
+| **物理**(权威/确定性/服务器侧) | `IPhysicsWorld` 抽象 + 确定性参考后端 + 射线 + ECS `PhysicsSystem`;Jolt 经 `BUILD_WITH_JOLT` 可选接入;意图→物理经 gameplay `ActuationSystem` 统一为单一 Transform 写者 | ✅ **落地**(`next_physics` + 可选 `next_physics_jolt` + `next_gameplay`,[ADR-0009](adr/0009-physics-jolt-backend.md)/[ADR-0010](adr/0010-actuation-single-transform-writer.md));**待补**:Jolt 跨平台确定性、dynamic 受力角色控制 |
+| **headless 世界规则/状态接线** | 任务条件/动作接真实世界状态;世界状态可查询/可回放 | 部分(Game API 的 `Tasks`/意图 + `DefaultIntentResolver` 已起步);任务系统接线待续 |
 
 ## P1 — 重大
 | 缺口 | 说明 | 粗估 |
@@ -35,12 +35,34 @@
 | UE5 许可/版本治理(Epic 抽成、版本升级流程)写入流程 | — |
 | 一次性 style pass(枚举命名等) | 天 |
 | 品牌 → 代码符号同步(`Next`/`next_*`/`NEXT_*` → Blame 的脚本化重命名) | 天(脚本化 + 验证) |
+| `World::Each` 加 const 重载,Game API 的 Observe/Sense 读路径用 `const World*` + `const Components&`(类型层表达"只读",与写即意图一致;现为 runtime 限制) | 天 |
+| 边界 lock-free 结构(`TripleBuffer`/`SpscRing`)补 **TSan CI job + 仓内双线程压测**(当前 SPSC 跨线程正确性仅靠 acquire/release 论证,无实跑回归) | 天 |
+| 玩家语言前端:把玩家 C/Rust/AssemblyScript 编到沙箱字节码或接 WASM 后端(`ISandbox` 已就位);届时 HackOps 弃用 `popen` | 周–月 |
+| `SnapshotPublisher` 每 tick 重建 `std::map`(N 次红黑树分配 + 查找);实体规模变大后改为**有序 vector 归并 diff**(零分配、线性)。当前 map 版清晰正确,纯性能优化,不急 | 天 |
+| `SenseRadius`/`SenseNearest` 用 `radius*radius`,半径 > ~1.8e19 时 `r2` 溢出为 +Inf → 退化为无界(游戏坐标不会到此量级;float 平方距离的固有限制,记录备查) | — |
 
 ## 🗑 已作废(不再是我们的负担,改由 UE5/Jolt)
 - 自研渲染器/RHI 接线、GI/AO/阴影/反射/RT 出图、材质/shader 变体系统、frame graph 执行器 → **UE5**。
 - 流送↔自研渲染打通、Transform 世界矩阵供渲染、无 Linux 渲染后端 → **UE5**(流送的 sim 侧兴趣管理仍可复用)。
 - 内容创作工具(场景/材质编辑、FBX/PNG 导入、资产视口) → **UE5 编辑器**。
 - 自研物理 → **Jolt**。
+
+## 本轮已清偿(2026-05-30,操控统一 + 物理感知)
+- **操控单一 Transform 写者**([ADR-0010](adr/0010-actuation-single-transform-writer.md)):新增 gameplay 层 `engine/gameplay`(`next_gameplay`)。`ActuationSystem` 把 `MoveTo` 意图按"是否物理实体"二选一移动——物理实体→设 body 速度(物理独占写 Transform),非物理→直接积分 Transform。清除了 resolver 与物理争抢 Transform 的债;gameapi 与 physics 仍互不依赖,由 gameplay 桥接。
+- **物理射线 + Game API 感知**:`IPhysicsWorld::Raycast`(参考后端 AABB slab + Jolt `CastRay`);gameapi 加抽象 `IWorldQuery` + `Sense` 域 `Raycast` 调用(physics 无关);gameplay `PhysicsWorldQuery` 实现它并把命中 body 映回 ECS 实体。玩家代码现在能经能力门控的 Game API 物理感知世界(视线/探测)。
+- 测试:gameapi 21、gameplay 6、physics 9(含双后端射线);全 16 套 ctest + ASan 绿;`test_actuation` 入 CI sanitizers 矩阵。
+
+## 本轮已清偿(2026-05-30,物理接入)
+- **物理 = 可换能力,非绑定 Jolt**([ADR-0009](adr/0009-physics-jolt-backend.md)):`engine/physics`(`next_physics`)= `IPhysicsWorld` 抽象 + 确定性参考后端(重力 + 半隐式欧拉 + AABB 静态碰撞)+ ECS `RigidBodyComponent` + `PhysicsSystem`(固定步、按 ECS hook 建/销 body、把 body transform 写回 `TransformComponent` → 顺 [边界](design/sim-ue5-boundary.md)管线到 UE5)。
+- **Jolt 真接进来了**:`next_physics_jolt`(`JoltPhysicsWorld`)经 `BUILD_WITH_JOLT=ON` + FetchContent 拉 JoltPhysics v5.2.0,编译/链接/仿真全通过(单线程确定性 job system;球落到静态地板上正确停住的冒烟测试绿)。核心 `next_physics` **从不引用 Jolt 符号**;默认 `headless`/`asan` 预设不拉、不建 Jolt,主干 15/15 + ASan 全绿不依赖网络。
+- 启用:`cmake -S . -B <dir> -DBUILD_WITH_JOLT=ON`(其余照常)。
+
+## 本轮已清偿(2026-05-30,护城河纵切面)
+- **Game API** `next_gameapi`([ADR-0007](adr/0007-game-api-contract.md)):能力域化 `CapabilitySet`、冻结扁平 C-ABI(`abi.h` + `AbiDispatch`)、`GameApi` 门面、**写即意图** + `DefaultIntentResolver`、确定性时钟。
+- **玩家代码沙箱** `next_sandbox`([ADR-0008](adr/0008-player-code-sandbox.md)):后端无关 `ISandbox` + 安全契约;自研确定性燃料计量 VM(`RefVm`,零环境权限、唯一外联=能力门控 host-call);`GameApiGateway` 纵深防御。对抗性测试(越界/燃料/栈/DIV0/非法指令/未授权 host-call)全绿。
+- **sim↔UE5 边界** `next_boundary`([ADR-0006](adr/0006-sim-ue5-boundary.md)):无锁三重缓冲 + SPSC 命令/事件环 + `ISnapshotTransport`/`InProcessTransport` + `SnapshotPublisher`(ECS 脏集→spawn/update/despawn 增量)。
+- **垂直切片**(headless,无渲染器):沙箱 guest 经 Game API 感知目标→下 MoveTo→tick 应用→边界出快照,且可确定性回放。
+- 全部 4 个新测试套(`GameApiTest`/`SandboxTest`/`BoundaryTest`/`VerticalSliceTest`)纳入 CI sanitizers 矩阵,ASan/UBSan 通过。
 
 ## 本轮已清偿(2026-05)
 - 资产压缩端到端、`.npkg` v2 + 内容哈希 ID + 依赖 manifest;ECS 重写为 archetype 数据导向([ADR-0002](adr/0002-archetype-ecs.md));流送每帧预算;工业级质量工具链([ADR-0003](adr/0003-quality-gates.md),并修复了一个关机期 UAF);文档重构为"公司核心资产、多游戏"结构([ADR-0001](adr/0001-engine-is-company-core-asset.md));确立 UE5+Jolt+headless 战略([ADR-0005](adr/0005-ue5-renderer-jolt-headless-world.md));收敛远端分支为单一 `master` 主线([ADR-0004](adr/0004-branch-consolidation.md))。

@@ -14,3 +14,7 @@
 | [0004](0004-branch-consolidation.md) | 收敛 `hackops/*` 长期分叉分支 | Accepted |
 | [0005](0005-ue5-renderer-jolt-headless-world.md) | 渲染交 UE5 / 物理用 Jolt / 自研 headless 权威世界 + 安全玩家代码运行时 + Game API | Accepted |
 | [0006](0006-sim-ue5-boundary.md) | sim↔UE5 边界:无锁三重缓冲快照流 + 单向命令/事件队列(细节见 [`design/sim-ue5-boundary.md`](../design/sim-ue5-boundary.md)) | Accepted |
+| [0007](0007-game-api-contract.md) | Game API:能力域化 / 版本化 / 确定性的唯一契约(细节见 [`design/gameapi-and-sandbox.md`](../design/gameapi-and-sandbox.md)) | Accepted |
+| [0008](0008-player-code-sandbox.md) | 玩家代码沙箱:由安全边界定义、后端可换(非绑定 WASM) | Accepted |
+| [0009](0009-physics-jolt-backend.md) | 物理:`IPhysicsWorld` 抽象 + 确定性参考后端;Jolt 为可选后端(FetchContent,默认关) | Accepted |
+| [0010](0010-actuation-single-transform-writer.md) | 操控统一:意图驱动物理,Transform 由单一写者拥有(gameplay 层 `ActuationSystem`) | Accepted |

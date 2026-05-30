@@ -74,8 +74,17 @@ Current limitations:
   is present but needs verification on a Windows machine.
 - Main-grid text rendering works; floating grids, external cmdline UI,
   highlight/style tables, mouse, IME, and renderer integration are not complete.
-- The policy loop still uses direct host Python execution. The production path
-  still needs `engine/sandbox`, resource budgets, and a proper World API bridge.
+- The policy loop still uses direct host Python execution (`popen`), which has
+  **zero isolation** — it is a terminal/UX smoke test, NOT the production path.
+  The production path now exists: `engine/gameapi` (the capability-domained Game
+  API, ADR-0007), `engine/sandbox` (the security-first player-code runtime with a
+  deterministic fuel-metered VM, ADR-0008), and `engine/boundary` (the sim↔UE5
+  snapshot stream, ADR-0006). The headless vertical slice
+  (`tests/integration/test_vertical_slice.cpp`) runs sandboxed "player code"
+  through the Game API into the authoritative world and out to a view snapshot.
+  What remains to retire `popen` for HackOps: a player-language frontend
+  (compile C/Rust/AssemblyScript → the sandbox bytecode or a WASM backend) so the
+  Neovim-edited policy becomes a sandbox module instead of a host process.
 
 ## Why This Matters
 
