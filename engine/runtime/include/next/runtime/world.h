@@ -145,6 +145,25 @@ public:
         }
     }
 
+    // Read-only iteration: same fast path, but hands the callback const Components&. Lets a
+    // read-only consumer (e.g. the Game API's Observe/Sense paths) express "I only read" at the
+    // type level — the compiler then forbids mutating world state on that path.
+    template<typename... Components, typename Fn>
+    void Each(Fn&& fn) const {
+        const std::vector<ComponentTypeID> query = MakeSortedSignature<Components...>();
+        for (const auto& archetypePtr : archetypes_) {
+            const Archetype* archetype = archetypePtr.get();
+            if (!SignatureContainsAll(archetype->Signature(), query)) {
+                continue;
+            }
+            std::tuple<const Components*...> columns{archetype->template ColumnData<Components>()...};
+            const size_t count = archetype->Size();
+            for (size_t row = 0; row < count; ++row) {
+                fn(archetype->EntityAt(row), std::get<const Components*>(columns)[row]...);
+            }
+        }
+    }
+
     // Legacy Transform helpers (kept for backward compatibility)
     TransformComponent* AddTransform(Entity entity);
     TransformComponent* GetTransform(Entity entity);

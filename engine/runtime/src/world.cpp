@@ -84,6 +84,9 @@ Entity World::CreateEntity() {
         id = freeIDs_.front();
         freeIDs_.pop_front();
         version = static_cast<uint16_t>(entityMetadata_[id].version + 1);
+        if (version == 0) {
+            version = 1;  // 0 is the reserved "invalid" sentinel (Entity::IsValid); skip it on wrap
+        }
     } else {
         id = nextEntityID_++;
     }

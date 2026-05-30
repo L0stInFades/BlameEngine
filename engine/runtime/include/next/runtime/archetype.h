@@ -149,12 +149,27 @@ public:
         return nullptr;
     }
 
+    const ComponentColumn* ColumnFor(ComponentTypeID type) const {
+        for (const ComponentColumn& column : columns_) {
+            if (column.Type() == type) {
+                return &column;
+            }
+        }
+        return nullptr;
+    }
+
     // Typed base pointer of a component column, for the query fast path. Returns nullptr if
     // this archetype does not carry T (callers only iterate rows when the column exists).
     template<typename T>
     T* ColumnData() {
         ComponentColumn* column = ColumnFor(ComponentType<T>::GetID());
         return column != nullptr ? static_cast<T*>(column->At(0)) : nullptr;
+    }
+
+    template<typename T>
+    const T* ColumnData() const {
+        const ComponentColumn* column = ColumnFor(ComponentType<T>::GetID());
+        return column != nullptr ? static_cast<const T*>(column->At(0)) : nullptr;
     }
 
     // Append an entity, default-constructing every component column. Returns its row.

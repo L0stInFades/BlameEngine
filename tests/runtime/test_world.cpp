@@ -11,13 +11,9 @@ using ::testing::Test;
 
 class WorldTest : public Test {
 protected:
-    void SetUp() override {
-        Logger::Initialize();
-    }
+    void SetUp() override { Logger::Initialize(); }
 
-    void TearDown() override {
-        Logger::Shutdown();
-    }
+    void TearDown() override { Logger::Shutdown(); }
 
     World world_;
 };
@@ -25,6 +21,18 @@ protected:
 // Test world initialization
 TEST_F(WorldTest, Initialization) {
     EXPECT_EQ(world_.GetEntityCount(), 0u);
+}
+
+// Reusing one index past the 16-bit version wrap must never yield version 0 (the invalid
+// sentinel): the recreated entity has to stay valid across the 65536th reuse.
+TEST_F(WorldTest, EntityVersionWrapStaysValid) {
+    Entity e;
+    for (int i = 0; i < 70000; ++i) {
+        e = world_.CreateEntity();
+        ASSERT_TRUE(e.IsValid()) << "invalid at iteration " << i << " (version " << e.version << ")";
+        ASSERT_TRUE(world_.IsEntityValid(e)) << "not tracked at iteration " << i;
+        world_.DestroyEntity(e);
+    }
 }
 
 // Test entity creation
@@ -341,8 +349,8 @@ TEST_F(WorldTest, GetTransformLegacy) {
     EXPECT_NE(transform, nullptr);
 }
 
-} // namespace testing
-} // namespace Next
+}  // namespace testing
+}  // namespace Next
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
