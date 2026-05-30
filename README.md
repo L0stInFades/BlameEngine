@@ -45,7 +45,7 @@
 
 ## 现状(诚实分级)
 
-地基是真的、有测试;**护城河的纵切面已经跑通**(2026-05-30):沙箱里的玩家代码经 Game API 改动 headless 权威世界,再经边界出快照——全程无渲染器、可确定性回放、ASan/UBSan 全绿。物理也已接入(`engine/physics`,确定性参考后端 + 可选 Jolt 后端)。仍有待补(玩家语言前端、跨进程/网络、AI-agent 工具面)。这不是免责声明,是路线图——明确区分 production / usable / prototype / absent 本身就是这份 README 的功能。
+地基是真的、有测试;**护城河的纵切面已经跑通**(2026-05-30):沙箱里的玩家代码经 Game API 改动 headless 权威世界,再经边界出快照——全程无渲染器、可确定性回放、ASan/UBSan 全绿。物理也已接入(`engine/physics`,确定性参考后端 + 可选 Jolt 后端)。**玩家语言前端也跑通了**:现代 C++(A*)与 Rust(二分查找)编到 wasm32,经 WASM 沙箱后端在 headless 世界里运行,与手写字节码说同一套 Game API([ADR-0011](docs/adr/0011-wasm-language-frontend.md))。仍有待补(生产级燃料计量 WASM 后端、跨进程/网络、AI-agent 工具面)。这不是免责声明,是路线图——明确区分 production / usable / prototype / absent 本身就是这份 README 的功能。
 
 | 已建成 | 级别 | 说明 |
 |---|---|---|
@@ -61,13 +61,14 @@
 | 护城河 | 级别 | 说明 |
 |---|---|---|
 | **Game API**(`engine/gameapi`) | **usable** | 能力域化 / 版本化 / 写即意图;三消费者共用的唯一契约([ADR-0007](docs/adr/0007-game-api-contract.md)) |
-| **玩家代码沙箱**(`engine/sandbox`) | **usable** | 安全契约 + `ISandbox` + 自研确定性燃料 VM(零环境权限、能力门控 host-call);替代 `popen(python3)` 的架构,对抗性测试全绿([ADR-0008](docs/adr/0008-player-code-sandbox.md)) |
+| **玩家代码沙箱**(`engine/sandbox`) | **usable** | 安全契约 + `ISandbox` + 自研确定性燃料 VM(零环境权限、能力门控 host-call);对抗性测试全绿([ADR-0008](docs/adr/0008-player-code-sandbox.md));[安全审计](docs/security/sandbox-audit-2026-05-30.md)39 项边界守住 |
+| **玩家语言前端**(`next_sandbox_wasm`) | **usable**(opt-in) | C++23 / Rust 2024 → wasm32 → wasm3 后端,与字节码 guest 同一套 Game API ABI;A*/二分查找在 headless 世界跑通(`BUILD_WITH_WASM`,[ADR-0011](docs/adr/0011-wasm-language-frontend.md)) |
 | **sim↔UE5 复制层**(`engine/boundary`) | **usable** | wait-free 三重缓冲快照流 + SPSC 命令/事件队列 + ECS 脏集发布器(进程内,[ADR-0006](docs/adr/0006-sim-ue5-boundary.md)) |
 | **物理**(`engine/physics`) | **usable** | `IPhysicsWorld` 抽象 + 确定性参考后端 + ECS `PhysicsSystem`(固定步,写回 Transform);Jolt 为可选后端(`BUILD_WITH_JOLT`,核心 Jolt 无关,[ADR-0009](docs/adr/0009-physics-jolt-backend.md)) |
 
 | 护城河 · 待建 | 现状 |
 |---|---|
-| 玩家语言前端 | **absent** — 把玩家的 C/Rust/AssemblyScript 编译到沙箱字节码或 WASM 后端(届时 HackOps 才真正弃用 `popen`) |
+| 生产级燃料计量 WASM 后端 | **partial** — wasm3 后端能跑 C++/Rust,但不计 CPU 燃料;生产换 wasmtime `consume_fuel` 或加载期插桩(RefVm 仍是燃料计量参考) |
 | 跨进程 / 网络 transport | **absent** — 同一份快照数据模型,换 transport 即升级专用服务器 |
 | AI-agent 工具面(P1) | **absent** — 把 Game API 以工具协议暴露给 agent |
 

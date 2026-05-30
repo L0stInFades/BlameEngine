@@ -10,7 +10,7 @@
 | 缺口 | 说明 | 状态 |
 |---|---|---|
 | **Game API**(能力域化 / 版本化 / 确定性) | 玩家代码 / AI agent / UE5 视图三者唯一契约;整个架构的中心 | ✅ **v1 落地**(`next_gameapi`,[ADR-0007](adr/0007-game-api-contract.md));随玩法持续演进 |
-| **玩家代码沙箱**(安全第一) | 宿主只暴露 Game API,燃料/内存限额、无逃逸;替换 `popen(python3)` 探针 | ✅ **落地**(`next_sandbox` + 参考 VM,[ADR-0008](adr/0008-player-code-sandbox.md));边界安全审计见 [sandbox-audit](security/sandbox-audit-2026-05-30.md)(真实 headless 世界上跑对抗性玩家代码,39 项边界守住、ASan/UBSan 全清,1 中危发现 F-1);**待补**:玩家语言前端 / 生产级 WASM 后端 |
+| **玩家代码沙箱**(安全第一) | 宿主只暴露 Game API,燃料/内存限额、无逃逸;替换 `popen(python3)` 探针 | ✅ **落地**(`next_sandbox` + 参考 VM,[ADR-0008](adr/0008-player-code-sandbox.md));边界安全审计见 [sandbox-audit](security/sandbox-audit-2026-05-30.md)(39 项边界守住、ASan/UBSan 全清,1 中危发现 F-1);**玩家语言前端已落地**:现代 C++/Rust 编到 wasm32,经 `next_sandbox_wasm`(wasm3)运行,A*/二分查找在 headless 世界跑通([ADR-0011](adr/0011-wasm-language-frontend.md));**待补**:生产级燃料计量 WASM 后端(wasm3 不计 CPU 燃料) |
 | **sim↔UE5 状态复制层** | headless 权威状态 → UE5 视图镜像;进程内起步、网络/服务器权威设计 | ✅ **进程内落地**(`next_boundary`,[ADR-0006](adr/0006-sim-ue5-boundary.md));**待补**:跨进程 / 网络 transport |
 | **物理**(权威/确定性/服务器侧) | `IPhysicsWorld` 抽象 + 确定性参考后端 + 射线 + ECS `PhysicsSystem`;Jolt 经 `BUILD_WITH_JOLT` 可选接入;意图→物理经 gameplay `ActuationSystem` 统一为单一 Transform 写者 | ✅ **落地**(`next_physics` + 可选 `next_physics_jolt` + `next_gameplay`,[ADR-0009](adr/0009-physics-jolt-backend.md)/[ADR-0010](adr/0010-actuation-single-transform-writer.md));**待补**:Jolt 跨平台确定性、dynamic 受力角色控制 |
 | **headless 世界规则/状态接线** | 任务条件/动作接真实世界状态;世界状态可查询/可回放 | 部分(Game API 的 `Tasks`/意图 + `DefaultIntentResolver` 已起步);任务系统接线待续 |
@@ -38,7 +38,7 @@
 | 品牌 → 代码符号同步(`Next`/`next_*`/`NEXT_*` → Blame 的脚本化重命名) | 天(脚本化 + 验证) |
 | `World::Each` 加 const 重载,Game API 的 Observe/Sense 读路径用 `const World*` + `const Components&`(类型层表达"只读",与写即意图一致;现为 runtime 限制) | 天 |
 | 边界 lock-free 结构(`TripleBuffer`/`SpscRing`)补 **TSan CI job + 仓内双线程压测**(当前 SPSC 跨线程正确性仅靠 acquire/release 论证,无实跑回归) | 天 |
-| 玩家语言前端:把玩家 C/Rust/AssemblyScript 编到沙箱字节码或接 WASM 后端(`ISandbox` 已就位);届时 HackOps 弃用 `popen` | 周–月 |
+| ~~玩家语言前端~~ ✅ **已落地**([ADR-0011](adr/0011-wasm-language-frontend.md)):C++/Rust → wasm32 → `next_sandbox_wasm`(wasm3)。**剩**:生产级**燃料计量** WASM 后端(wasm3 不计 CPU 燃料;`SandboxPolicy::fuel` 在该后端不生效——换 wasmtime `consume_fuel` 或加载期插桩);把 HackOps 的 `popen(python3)` 真正切到这条路 | 周 |
 | 沙箱浮点确定性(F-2,[审计](security/sandbox-audit-2026-05-30.md)):给 `next_sandbox`(及任何后端)显式 `-ffp-contract=off`,并把"禁用 `-ffast-math`"写入工程规范——guest 的 `FAdd/FSub/FMul/FDiv` 跨平台位级一致是回放/反作弊前提 | 天 |
 | `SnapshotPublisher` 每 tick 重建 `std::map`(N 次红黑树分配 + 查找);实体规模变大后改为**有序 vector 归并 diff**(零分配、线性)。当前 map 版清晰正确,纯性能优化,不急 | 天 |
 | `SenseRadius`/`SenseNearest` 用 `radius*radius`,半径 > ~1.8e19 时 `r2` 溢出为 +Inf → 退化为无界(游戏坐标不会到此量级;float 平方距离的固有限制,记录备查) | — |
@@ -48,6 +48,12 @@
 - 流送↔自研渲染打通、Transform 世界矩阵供渲染、无 Linux 渲染后端 → **UE5**(流送的 sim 侧兴趣管理仍可复用)。
 - 内容创作工具(场景/材质编辑、FBX/PNG 导入、资产视口) → **UE5 编辑器**。
 - 自研物理 → **Jolt**。
+
+## 本轮已清偿(2026-05-30,玩家语言前端:C++/Rust 进沙箱)
+- **WASM 沙箱后端**([ADR-0011](adr/0011-wasm-language-frontend.md)):`next_sandbox_wasm`(`Wasm3Sandbox : ISandbox`,wasm3,经 `BUILD_WITH_WASM` + FetchContent,默认关,像 Jolt 一样可选)。一套 ABI 两个后端——WASM guest import `env.host_call(callId,argsOff,argsLen,retOff,retLen)`,**精确映射**到既有 `HostGateway::Invoke`,与手写 NBVM guest 说同一套 Game API。同样在 host-call 接缝复用 RefVm 的窗口边界检查 + host-call 配额;WASM 自身边界检查每次内存访问。
+- **真把 C++/Rust 跑进来了**:`examples/wasm_guests` 在构建期把**现代 C++(C++23)的 A***和 **Rust(edition 2024)的二分查找**编到 wasm32;`tools/wasm_demo` 在真实 headless 世界上经 `Wasm3Sandbox` 运行——C++ guest 经 Game API 感知障碍、规划,**路径长度与 host BFS 真值逐步一致(24,强制绕路 > 曼哈顿 14)**并下 MoveTo;Rust guest 感知 beacon 后用 `core::slice::binary_search` 搜排好序的地图。8/8 校验通过。
+- **限制**:wasm3 不计 CPU 燃料(`SandboxPolicy::fuel` 在该后端不生效;内存安全/能力门控/host-call 配额仍生效)。RefVm 仍是燃料计量的确定性参考后端;生产用 wasmtime `consume_fuel` 或加载期插桩。已登记 P2。
+- 默认主干不受影响(wasm 全程 opt-in):headless 预设 17/17 ctest 仍绿。
 
 ## 本轮已清偿(2026-05-30,操控统一 + 物理感知)
 - **操控单一 Transform 写者**([ADR-0010](adr/0010-actuation-single-transform-writer.md)):新增 gameplay 层 `engine/gameplay`(`next_gameplay`)。`ActuationSystem` 把 `MoveTo` 意图按"是否物理实体"二选一移动——物理实体→设 body 速度(物理独占写 Transform),非物理→直接积分 Transform。清除了 resolver 与物理争抢 Transform 的债;gameapi 与 physics 仍互不依赖,由 gameplay 桥接。

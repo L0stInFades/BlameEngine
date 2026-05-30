@@ -82,9 +82,12 @@ Current limitations:
   snapshot stream, ADR-0006). The headless vertical slice
   (`tests/integration/test_vertical_slice.cpp`) runs sandboxed "player code"
   through the Game API into the authoritative world and out to a view snapshot.
-  What remains to retire `popen` for HackOps: a player-language frontend
-  (compile C/Rust/AssemblyScript → the sandbox bytecode or a WASM backend) so the
-  Neovim-edited policy becomes a sandbox module instead of a host process.
+  The player-language frontend now exists too: `next_sandbox_wasm` (ADR-0011)
+  runs real C++/Rust compiled to wasm32 on the same Game API ABI — classic
+  algorithms (A*, binary search) already run in a headless world via
+  `tools/wasm_demo`. What remains to retire `popen` for HackOps is the wiring:
+  compile the Neovim-edited policy to wasm and run it in `Wasm3Sandbox` instead of
+  a host Python process (plus a fuel-metering WASM runtime for untrusted code).
 
 ## Why This Matters
 
