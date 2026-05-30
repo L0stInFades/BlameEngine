@@ -10,7 +10,7 @@
 | 缺口 | 说明 | 状态 |
 |---|---|---|
 | **Game API**(能力域化 / 版本化 / 确定性) | 玩家代码 / AI agent / UE5 视图三者唯一契约;整个架构的中心 | ✅ **v1 落地**(`next_gameapi`,[ADR-0007](adr/0007-game-api-contract.md));随玩法持续演进 |
-| **玩家代码沙箱**(安全第一) | 宿主只暴露 Game API,燃料/内存限额、无逃逸;替换 `popen(python3)` 探针 | ✅ **落地**(`next_sandbox` + 参考 VM,[ADR-0008](adr/0008-player-code-sandbox.md));**待补**:玩家语言前端 / 生产级 WASM 后端 |
+| **玩家代码沙箱**(安全第一) | 宿主只暴露 Game API,燃料/内存限额、无逃逸;替换 `popen(python3)` 探针 | ✅ **落地**(`next_sandbox` + 参考 VM,[ADR-0008](adr/0008-player-code-sandbox.md));边界安全审计见 [sandbox-audit](security/sandbox-audit-2026-05-30.md)(真实 headless 世界上跑对抗性玩家代码,39 项边界守住、ASan/UBSan 全清,1 中危发现 F-1);**待补**:玩家语言前端 / 生产级 WASM 后端 |
 | **sim↔UE5 状态复制层** | headless 权威状态 → UE5 视图镜像;进程内起步、网络/服务器权威设计 | ✅ **进程内落地**(`next_boundary`,[ADR-0006](adr/0006-sim-ue5-boundary.md));**待补**:跨进程 / 网络 transport |
 | **物理**(权威/确定性/服务器侧) | `IPhysicsWorld` 抽象 + 确定性参考后端 + 射线 + ECS `PhysicsSystem`;Jolt 经 `BUILD_WITH_JOLT` 可选接入;意图→物理经 gameplay `ActuationSystem` 统一为单一 Transform 写者 | ✅ **落地**(`next_physics` + 可选 `next_physics_jolt` + `next_gameplay`,[ADR-0009](adr/0009-physics-jolt-backend.md)/[ADR-0010](adr/0010-actuation-single-transform-writer.md));**待补**:Jolt 跨平台确定性、dynamic 受力角色控制 |
 | **headless 世界规则/状态接线** | 任务条件/动作接真实世界状态;世界状态可查询/可回放 | 部分(Game API 的 `Tasks`/意图 + `DefaultIntentResolver` 已起步);任务系统接线待续 |
@@ -18,6 +18,7 @@
 ## P1 — 重大
 | 缺口 | 说明 | 粗估 |
 |---|---|---|
+| **沙箱 host-call 成本不对称**(F-1,[审计](security/sandbox-audit-2026-05-30.md)) | `Sense*`/`QueryByTag` 在门面是 O(N) 全世界扫描,但每个 `HostCall` 只收**固定 50 燃料**、只按**次数**(`maxHostCallsPerTick`)限流——guest 成本与 host 工作量脱钩(实测 N=4 与 N=4000 燃料同为 2754)。多 agent 权威服务器下是算法复杂度/非对称 DoS 面。修法:按工作量计费 / 给感知类单独紧配额 / 上空间加速(网格/BVH) | 周 |
 | **AI-agent 工具面** | 把 Game API 以工具协议(MCP 式)暴露给 agent,帮玩家排任务/hack | 数周 |
 | **复活 `engine/ops`(Ops Runtime 雏形)** | 旧 master 线有 ~1275 LOC 的 `ops_workspace`/`policy_simulation`/`python_worker`(沙箱化玩家代码执行的早期雏形),分支收敛时未移植;评估并把仍适用的逻辑迁到新 archetype ECS,作为 WASM 沙箱的参考/前身。来源:tag `archive/pre-blame`([ADR-0004](adr/0004-branch-consolidation.md)) | 数周 |
 | 玩家代码编辑 UX 接入 UE5 | Neovim 表面嵌入 UE5(或伴随窗口) | 数周 |
@@ -38,6 +39,7 @@
 | `World::Each` 加 const 重载,Game API 的 Observe/Sense 读路径用 `const World*` + `const Components&`(类型层表达"只读",与写即意图一致;现为 runtime 限制) | 天 |
 | 边界 lock-free 结构(`TripleBuffer`/`SpscRing`)补 **TSan CI job + 仓内双线程压测**(当前 SPSC 跨线程正确性仅靠 acquire/release 论证,无实跑回归) | 天 |
 | 玩家语言前端:把玩家 C/Rust/AssemblyScript 编到沙箱字节码或接 WASM 后端(`ISandbox` 已就位);届时 HackOps 弃用 `popen` | 周–月 |
+| 沙箱浮点确定性(F-2,[审计](security/sandbox-audit-2026-05-30.md)):给 `next_sandbox`(及任何后端)显式 `-ffp-contract=off`,并把"禁用 `-ffast-math`"写入工程规范——guest 的 `FAdd/FSub/FMul/FDiv` 跨平台位级一致是回放/反作弊前提 | 天 |
 | `SnapshotPublisher` 每 tick 重建 `std::map`(N 次红黑树分配 + 查找);实体规模变大后改为**有序 vector 归并 diff**(零分配、线性)。当前 map 版清晰正确,纯性能优化,不急 | 天 |
 | `SenseRadius`/`SenseNearest` 用 `radius*radius`,半径 > ~1.8e19 时 `r2` 溢出为 +Inf → 退化为无界(游戏坐标不会到此量级;float 平方距离的固有限制,记录备查) | — |
 
