@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BLAME ENGINE — 全球首款面向真实代码运行的下一代实时 3D 模拟引擎</title>
+<meta name="description" content="Blame Engine 是世界领先的、面向实时代码模拟与 HackOps 玩法的自研 C++17 游戏引擎。具备原生的 Neovim 嵌入、数据驱动的渲染图管线 Render Graph、体素锥追踪全局光照 (VXGI)、8态异步世界流送调度系统以及高扩展 ECS 架构。" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23050608'/%3E%3Ctext x='16' y='23' font-family='monospace' font-size='20' font-weight='700' fill='%2300ffd2' text-anchor='middle'%3E%3E_%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ============ BOOT ROUTINE OVERLAY ============ -->
+<div class="boot-screen" id="bootScreen">
+  <div class="boot-screen__box">
+    <div class="boot-screen__logo">BLAME // ENGINE v0.9</div>
+    <div class="boot-screen__console" id="bootConsole"></div>
+    <div class="boot-screen__bar-container">
+      <div class="boot-screen__bar" id="bootBar"></div>
+    </div>
+    <button class="boot-screen__skip" id="bootSkip">SKIP_BOOT</button>
+  </div>
+</div>
+
+<div class="grain" aria-hidden="true"></div>
+<div class="scan" aria-hidden="true"></div>
+
+<!-- ============ MARGINALIA FRAME ============ -->
+<div class="frame" aria-hidden="true">
+  <span class="frame__tl">BLAME // ENGINE</span>
+  <span class="frame__tr">CORE BUILD 0.9.1a · PRODUCTION READY READY</span>
+  <span class="frame__bl">C++17 · NVIM—EMBED</span>
+  <span class="frame__br">SYS_STATUS · OPERATIONAL</span>
+</div>
+
+<div class="rail" aria-hidden="true"><span class="rail__bar" id="railBar"></span></div>
+
+<!-- ============ NAV ============ -->
+<header class="nav" id="nav">
+  <a class="nav__mark" href="#top">
+    <span class="nav__glyph">&gt;_</span>
+    <span class="nav__word">BLAME<span class="nav__word-dim">//ENGINE</span></span>
+  </a>
+  <nav class="nav__links">
+    <a href="#bet" data-sec>§00 愿景</a>
+    <a href="#loop" data-sec>§01 循环架构</a>
+    <a href="#systems" data-sec>§02 核心模块</a>
+    <a href="#render" data-sec>§03 图形管线</a>
+    <a href="#world" data-sec>§04 大世界</a>
+    <a href="#arch" data-sec>§05 分层架构</a>
+    <a href="#numbers" data-sec>§06 工程体量</a>
+    <a href="#run" data-sec>§07 模拟控制台</a>
+    <a href="#road" data-sec>§08 研发蓝图</a>
+  </nav>
+  <span class="nav__tag">自研 C++17 · 62,445 LOC</span>
+</header>
+
+<!-- ============ HERO ============ -->
+<section class="hero" id="top">
+  <canvas class="hero__canvas" id="netcanvas" aria-hidden="true"></canvas>
+  <div class="hero__vignette" aria-hidden="true"></div>
+
+  <div class="hero__inner">
+    <div class="hero__kicker">
+      <span class="dot"></span>
+      <span>下一代实时 3D 模拟引擎 / NEXT-GEN REAL-TIME SIMULATION ENGINE</span>
+      <span class="hero__kicker-x">UPLINK STATE: ACTIVE · GPU CLUSTERS RUNNING</span>
+    </div>
+
+    <h1 class="hero__title" id="heroTitle">
+      <span class="hero__title-line">BLAME</span>
+      <span class="hero__title-line hero__title-line--out">//ENGINE</span>
+    </h1>
+
+    <p class="hero__lede">
+      Blame Engine 是专为开发者与极客打造的<strong>高保真实时模拟引擎</strong>。<br />
+      我们打破了传统模拟游戏的次元壁：通过在底层直接耦合<strong>生产级 Neovim 编辑器</strong>与进程沙箱，将玩家编写的真实代码编译、并无缝转换为驱动 3D 虚拟世界的底层规则。
+    </p>
+
+    <div class="hero__stats" id="heroStats">
+      <div class="stat"><b data-count="62445">0</b><span>自研 C++ 核心代码 / LOC</span></div>
+      <div class="stat"><b data-count="1483">0</b><span>手写终端 RPC 通信协议 / LOC</span></div>
+      <div class="stat"><b data-count="33747">0</b><span>图形渲染管线规模 / LOC</span></div>
+      <div class="stat"><b data-count="13915">0</b><span>自动化校验测试集 / LOC</span></div>
+    </div>
+
+    <div class="hero__cue">
+      <span>探索前沿的实时创作科技</span>
+      <span class="hero__cue-arrow">↓</span>
+    </div>
+  </div>
+
+  <div class="hero__ticker" aria-hidden="true">
+    <div class="ticker__track">
+      <span>NVIM&nbsp;--EMBED</span><i>·</i><span>MSGPACK-RPC</span><i>·</i><span>EXT_LINEGRID</span><i>·</i><span>REAL&nbsp;CODE</span><i>·</i><span>RENDER&nbsp;GRAPH</span><i>·</i><span>MESH&nbsp;SHADERS</span><i>·</i><span>DDGI&nbsp;/&nbsp;VXGI&nbsp;/&nbsp;RTGI</span><i>·</i><span>GTAO</span><i>·</i><span>VARIABLE&nbsp;RATE&nbsp;SHADING</span><i>·</i><span>WORLD&nbsp;PARTITION</span><i>·</i><span>PREDICTIVE&nbsp;STREAMING</span><i>·</i><span>HLOD</span><i>·</i><span>NO&nbsp;FAKE&nbsp;TERMINAL</span><i>·</i><span>WORK-STEALING&nbsp;JOBS</span><i>·</i>
+      <span>NVIM&nbsp;--EMBED</span><i>·</i><span>MSGPACK-RPC</span><i>·</i><span>EXT_LINEGRID</span><i>·</i><span>REAL&nbsp;CODE</span><i>·</i><span>RENDER&nbsp;GRAPH</span><i>·</i><span>MESH&nbsp;SHADERS</span><i>·</i><span>DDGI&nbsp;/&nbsp;VXGI&nbsp;/&nbsp;RTGI</span><i>·</i><span>GTAO</span><i>·</i><span>VARIABLE&nbsp;RATE&nbsp;SHADING</span><i>·</i><span>WORLD&nbsp;PARTITION</span><i>·</i><span>PREDICTIVE&nbsp;STREAMING</span><i>·</i><span>HLOD</span><i>·</i><span>NO&nbsp;FAKE&nbsp;TERMINAL</span><i>·</i><span>WORK-STEALING&nbsp;JOBS</span><i>·</i>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §00 THE BET ============ -->
+<section class="sec sec--manifesto" id="bet">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§00</span>
+    <h2 class="sec__title">技术愿景：用真实代码塑造下一代模拟游戏</h2>
+    <span class="sec__meta">THE VISION · THE NEXT DIMENSION</span>
+  </div>
+
+  <div class="manifesto">
+    <div class="manifesto__lead reveal">
+      <p>
+        传统的游戏引擎往往为了通用的商业目的妥协了极客特性。在需要高频代码运行、海量网络实体仿真和硬核 HackOps 玩法的场景下，我们必须提供一套全新设计的高性能运行时。
+      </p>
+      <p>
+        <strong>Blame Engine</strong> 提出了突破性的技术思路：将生产级别的编辑器环境直接集成至底层的 3D 渲染和 ECS 数据管线中。这意味着玩家的编写输入不用再经历漫长的解译，而是作为游戏世界的“第一等公民”立即执行。
+      </p>
+    </div>
+
+    <ul class="manifesto__pillars">
+      <li class="pillar reveal">
+        <span class="pillar__no">01</span>
+        <h3>极佳的终端渲染手感</h3>
+        <p>游戏视口即是真正的开发终端。通过手写的 msgpack-rpc 编解码器，将嵌入的 nvim 输入事件与状态画面直接映射为 GPU 渲染顶点，达成 0 延迟的极佳输入手感。</p>
+      </li>
+      <li class="pillar reveal">
+        <span class="pillar__no">02</span>
+        <h3>高可靠性安全沙箱</h3>
+        <p>沙箱与逻辑运行时的完全隔离。代码在底层可以安全、不受阻碍地异步执行，支持实时的语法报错诊断、LSP 关联提醒，以及复杂的多级逻辑回归。</p>
+      </li>
+      <li class="pillar reveal">
+        <span class="pillar__no">03</span>
+        <h3>毫秒级逻辑数据跃迁</h3>
+        <p>通过独立的多线程事件总线 (Event Bus)，代码的运行结果在几毫秒内即可转化为世界的状态修改，避免传统事件分发的死锁与堆栈延迟。</p>
+      </li>
+      <li class="pillar reveal">
+        <span class="pillar__no">04</span>
+        <h3>完美的模拟确定性</h3>
+        <p>引擎强制要求模拟更新（Simulation Tick）与帧渲染表现解耦。哪怕面临帧率大幅波动，模拟逻辑也能保持高度确定的时间步，支持逻辑的存档与完美回放。</p>
+      </li>
+    </ul>
+
+    <blockquote class="manifesto__quote reveal">
+      <p>创造超越想象的“真代码”交互体验。</p>
+      <p class="quote__body">
+        我们不提供 SaaS 风味的模板化功能介绍。Unreal Engine 用无与伦比的写实画面赋能创作者，而 Blame Engine 则是用完全敞开的底层代码运行时赋能极客。以下是关于图形、流送、ECS 逻辑和架构的全部工程细节。
+      </p>
+    </blockquote>
+  </div>
+</section>
+
+<!-- ============ §01 THE LOOP ============ -->
+<section class="sec sec--loop" id="loop">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§01</span>
+    <h2 class="sec__title">核心闭环：编辑、异步运行与世界映射</h2>
+    <span class="sec__meta">EDIT → EXECUTE → INTERACTIVE LOOP</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    这是 <code>hackops_demo</code> 中底层完全闭环的运行流程：玩家修改策略代码，通过异步 IO 在进程中运行，结果通过单向依赖层秒级映射回大世界的 ECS 实体上。
+  </p>
+
+  <ol class="loop reveal" id="loopSteps">
+    <li class="loop__step" data-st="0">
+      <span class="loop__n">01</span>
+      <h3>EDIT · 编辑阶段</h3>
+      <p>终端模块 <code>NvimSurface</code> 接管真实的编辑器进程，玩家在完全无感的前提下读写自己本机的 LazyVim、补全和插件配置。</p>
+      <span class="loop__src">engine/terminal · NvimSurface</span>
+    </li>
+    <li class="loop__arrow" aria-hidden="true">→</li>
+    <li class="loop__step" data-st="1">
+      <span class="loop__n">02</span>
+      <h3>EXECUTE · 执行阶段</h3>
+      <p>Job System 将策略运行脚本委派至工作池异步读取，解析执行脚本输出的结果评分，绝对不阻塞游戏视口的主线程渲染。</p>
+      <span class="loop__src">game/hackops · RunPolicy()</span>
+    </li>
+    <li class="loop__arrow" aria-hidden="true">→</li>
+    <li class="loop__step" data-st="2">
+      <span class="loop__n">03</span>
+      <h3>MAP · 映射阶段</h3>
+      <p>逻辑管理器解析评分，修改大世界 ECS 实体的属性数据：改变摄像机视口状态，拦截异常逻辑，或是锁定特定的传感器组件。</p>
+      <span class="loop__src">game/hackops · RouteStateForScore()</span>
+    </li>
+  </ol>
+
+  <div class="loop__detail">
+    <div class="loop__code reveal">
+      <div class="term__bar"><span class="term__dot"></span><span class="term__dot"></span><span class="term__dot"></span><span class="term__title">sample_policy.py — 策略与算法脚本</span></div>
+      <pre class="term__body"><span class="t-d"># tools/nvim_surface_probe/sample_policy.py</span>
+<span class="t-cmd">def</span> <span class="t-fn">score_order</span>(order, route):
+    score  = route[<span class="t-v">"travel_time"</span>]
+    score += route[<span class="t-v">"camera_risk"</span>] * <span class="t-n">3</span>
+    score -= route[<span class="t-v">"crowd_cover"</span>]
+    <span class="t-cmd">return</span> score
+
+<span class="t-cmd">if</span> __name__ == <span class="t-v">"__main__"</span>:
+    route = {<span class="t-v">"travel_time"</span>: <span class="t-n">18</span>,
+             <span class="t-v">"camera_risk"</span>: <span class="t-n">4</span>,
+             <span class="t-v">"crowd_cover"</span>: <span class="t-n">2</span>}
+    print(score_order({<span class="t-v">"id"</span>: <span class="t-v">"order.demo"</span>}, route))
+<span class="t-ok">  ↳ Return Code: 0 | Output: 28</span></pre>
+    </div>
+
+    <div class="loop__map reveal">
+      <h3 class="loop__map-title">映射结果：评分转换世界判定</h3>
+      <p class="loop__map-sub"><code>RouteStateForScore(score)</code> · 映射关系</p>
+      <ul class="statemap">
+        <li class="statemap__row statemap--ok">
+          <span class="statemap__cond">score ≤ 22</span>
+          <span class="statemap__state">RELEASED</span>
+          <span class="statemap__desc">策略符合安全标准，世界网络正常放行</span>
+        </li>
+        <li class="statemap__row statemap--mid statemap--hit">
+          <span class="statemap__cond">score ≤ 28</span>
+          <span class="statemap__state">REVIEW</span>
+          <span class="statemap__desc">风险指标增加，世界实体发出警报，进入备用安全线路审计</span>
+        </li>
+        <li class="statemap__row statemap--bad">
+          <span class="statemap__cond">score &gt; 28</span>
+          <span class="statemap__state">HELD</span>
+          <span class="statemap__desc">安全漏洞超标，强制锁定对应的传感器与实体操作台</span>
+        </li>
+      </ul>
+      <p class="loop__map-note">当前计算评分为 <strong>28</strong> → 命中 <strong>REVIEW</strong> 状态。代码改动会即时体现在 3D 大世界的运作逻辑中。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §02 INTERACTIVE SYSTEMS DECK ============ -->
+<section class="sec sec--systems" id="systems">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§02</span>
+    <h2 class="sec__title">核心套件：交互式开发控制台</h2>
+    <span class="sec__meta">DEVELOPMENT SUITE · INTERACTIVE DIAGNOSTICS</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    无需通过虚构的 PPT 来理解引擎的功能。切换下方不同的控制台面板，你将直接以交互式可视化的形式，探究引擎四大模块的运作规律与性能数据。
+  </p>
+
+  <div class="deck reveal" id="interactiveDeck">
+    <div class="deck__header">
+      <div class="deck__tabs">
+        <button class="deck__btn is-active" data-tab="nvim">SYS.01 Terminal Layer</button>
+        <button class="deck__btn" data-tab="render">SYS.02 Graphics Layer</button>
+        <button class="deck__btn" data-tab="ecs">SYS.03 Logic Layer</button>
+        <button class="deck__btn" data-tab="world">SYS.04 World Layer</button>
+      </div>
+      <span class="deck__status" id="deckStatus">Awaiting Uplink...</span>
+    </div>
+
+    <!-- Panel 1: Nvim -->
+    <div class="deck__panel is-active" id="pane-nvim">
+      <div class="deck__view">
+        <div class="viz-nvim">
+          <div class="viz-nvim__matrix" id="nvimMatrix">
+            <!-- JS will populate rows and cells -->
+          </div>
+          <div class="viz-nvim__log" id="nvimLog">
+            <div class="viz-nvim__log-title">Msgpack-RPC events</div>
+            <!-- JS will populate log rows -->
+          </div>
+        </div>
+      </div>
+      <div class="deck__info">
+        <span class="deck__tag">NvimSurface</span>
+        <h3>嵌入式开发环境：无缝接轨生产级工具</h3>
+        <span class="deck__info-path">engine/terminal · 1,483 LOC</span>
+        <p class="deck__info-body">
+          放弃简陋的文本输入框。Blame Engine 通过手写底层 msgpack 编解码直接运行 <code>nvim --embed</code> 进程。用户的 LazyVim、高亮方案、诊断提示以及快捷键绑定被完美保留并直接耦合进 3D 渲染画面。
+        </p>
+        <ul class="deck__feats-list">
+          <li><i>✓</i> 基于 <code>nvim_ui_attach</code> + <code>ext_linegrid</code> 协议</li>
+          <li><i>✓</i> 手写高效 msgpack 解码与编码，确保帧率表现</li>
+          <li><i>✓</i> 精准解析 <code>grid_line</code> 与 <code>grid_scroll</code> 重绘包</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Panel 2: Render Graph -->
+    <div class="deck__panel" id="pane-render">
+      <div class="deck__view">
+        <div class="viz-render">
+          <div class="viz-render__canvas">
+            <div class="viz-render__nodes" id="renderGraphNodes">
+              <div class="viz-render__node is-active" data-pass="depth">
+                <div class="viz-render__node-title">DepthPass</div>
+                <div class="viz-render__node-desc">GBuffer Depth</div>
+              </div>
+              <div class="viz-render__node" data-pass="voxel">
+                <div class="viz-render__node-title">Voxelization</div>
+                <div class="viz-render__node-desc">Voxel Grid</div>
+              </div>
+              <div class="viz-render__node" data-pass="gi">
+                <div class="viz-render__node-title">GI Cone Trace</div>
+                <div class="viz-render__node-desc">Radiance Grid</div>
+              </div>
+              <div class="viz-render__node" data-pass="gtao">
+                <div class="viz-render__node-title">GTAO Pass</div>
+                <div class="viz-render__node-desc">AO Buffer</div>
+              </div>
+              <div class="viz-render__node" data-pass="taa">
+                <div class="viz-render__node-title">Temporal AA</div>
+                <div class="viz-render__node-desc">Backbuffer</div>
+              </div>
+            </div>
+          </div>
+          <div class="viz-render__desc" id="renderGraphDesc">
+            <div class="viz-render__desc-header">DepthPass (Selected)</div>
+            <p>写入深度缓冲以剔除后续遮挡。输出: <code>GBuffer Depth</code>. 格式: <code>DXGI_FORMAT_R32_TYPELESS</code>. Barrier: D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES.</p>
+          </div>
+        </div>
+      </div>
+      <div class="deck__info">
+        <span class="deck__tag">RenderGraph</span>
+        <h3>有向无环渲染图：可扩展的图形流水线</h3>
+        <span class="deck__info-path">render_graph.cpp · RenderGraphBuilder</span>
+        <p class="deck__info-body">
+          利用有向无环图 (DAG) 管理渲染流水线中的依赖关系。渲染引擎自动推演资源生命期、Barrier 屏障与别名（Aliasing）内存复用，方便图形特性即插即用。
+        </p>
+        <ul class="deck__feats-list">
+          <li><i>✓</i> 自动资源生命期分析与极致的显存复用</li>
+          <li><i>✓</i> 异步计算队列 (Async Compute) 独立派发</li>
+          <li><i>✓</i> 支持 4 档全局光照 (GI) 算法动态热切换</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Panel 3: ECS -->
+    <div class="deck__panel" id="pane-ecs">
+      <div class="deck__view">
+        <div class="viz-ecs">
+          <div class="viz-ecs__list" id="ecsList">
+            <!-- JS will populate entities -->
+          </div>
+          <div class="viz-ecs__inspector" id="ecsInspector">
+            <div class="viz-ecs__inspector-title">Select Entity to Inspect</div>
+            <div class="viz-ecs__components" id="ecsComponents">
+              <!-- JS will populate components -->
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="deck__info">
+        <span class="deck__tag">ECS System</span>
+        <h3>高局部性实体组件系统：逻辑与表现完全解耦</h3>
+        <span class="deck__info-path">engine/runtime · 3,126 LOC</span>
+        <p class="deck__info-body">
+          高性能 ECS 逻辑模拟层是整个世界的权威。通过 <code>Query::ForEach</code> 对海量网络、相机及玩家传感器实体进行高速数据遍历，逻辑状态通过单向事件总线广播至表现层。
+        </p>
+        <ul class="deck__feats-list">
+          <li><i>✓</i> 连续内存布局，极佳的 CPU 缓存行命中率</li>
+          <li><i>✓</i> 模拟与表现完全解耦，支持高保真存档与回放</li>
+          <li><i>✓</i> 纯数据墙隔离，保障多线程并行更新安全</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Panel 4: World -->
+    <div class="deck__panel" id="pane-world">
+      <div class="deck__view">
+        <div class="viz-world">
+          <div class="viz-world__metrics">
+            <div class="viz-world__metric">
+              <div class="viz-world__metric-name">Allocated Memory</div>
+              <div class="viz-world__metric-val" id="worldMem">245.2 MB</div>
+            </div>
+            <div class="viz-world__metric">
+              <div class="viz-world__metric-name">Active IO Tasks</div>
+              <div class="viz-world__metric-val" id="worldTasks">2</div>
+            </div>
+            <div class="viz-world__metric">
+              <div class="viz-world__metric-name">Evicted Cells</div>
+              <div class="viz-world__metric-val" id="worldEvictions">14</div>
+            </div>
+            <div class="viz-world__metric">
+              <div class="viz-world__metric-name">Max Streaming LOD</div>
+              <div class="viz-world__metric-val">LOD 0</div>
+            </div>
+          </div>
+          <div class="viz-world__map" id="worldMap">
+            <!-- JS will populate cell blocks -->
+          </div>
+        </div>
+      </div>
+      <div class="deck__info">
+        <span class="deck__tag">StreamingManager</span>
+        <h3>大世界分区流送：无感无读条世界</h3>
+        <span class="deck__info-path">streaming_manager.cpp · 2,065 LOC</span>
+        <p class="deck__info-body">
+          将开放世界切分为多个 Cell，每一片 Cell 支持地形、静态几何、音效、动态实体等 10 层独立流送。配合视野速度外推算法预测轨迹，异步加载多线程直接上传 GPU。
+        </p>
+        <ul class="deck__feats-list">
+          <li><i>✓</i> 8态状态机管理加载生命周期</li>
+          <li><i>✓</i> 基于速度矢量预测 (Velocity Predictor) 的预取通道</li>
+          <li><i>✓</i> 显存超预算时自动触发降 LOD 淘汰 (Eviction) 策略</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §03 RENDERING STACK ============ -->
+<section class="sec sec--systems" id="render">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§03</span>
+    <h2 class="sec__title">图形管线：逼真画面与前沿着色技术</h2>
+    <span class="sec__meta">engine/renderer · 33,747 LOC · 26 HLSL SHADERS</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    要在极致高画质的大场景城市和轻量化的终端渲染之间取得平衡，Blame Engine 提供了高度模块化且支持多后端的可扩展图形栈。
+    <span class="legend"><i class="b b--ok"></i>已落地</span>
+    <span class="legend"><i class="b b--wip"></i>设计中 / 旗舰路线</span>
+  </p>
+
+  <div class="cards">
+    <article class="card reveal">
+      <header class="card__head">
+        <span class="card__id">RHI</span>
+        <h3>① 后端无关渲染硬件接口 (RHI)</h3>
+        <span class="card__path">engine/rhi · 4,272 LOC</span>
+      </header>
+      <p class="card__body">API 抽象接口层。一套 RHI 代码直接适配 Windows (DirectX 12 Ultimate) 和 macOS (Metal API) 的底层描述符与流水线，降低跨平台渲染性能开销。</p>
+      <ul class="card__feats">
+        <li><i class="b b--ok"></i><code>Backend::DX12</code> / <code>Metal</code> / <code>Null</code> 双物理队列</li>
+        <li><i class="b b--ok"></i>Metal 平台全面支持 Argument Buffers (Tier 1) 参数表</li>
+        <li><i class="b b--wip"></i>Bindless 描述符机制 (Tier 2 硬件级极致加速)</li>
+      </ul>
+    </article>
+
+    <article class="card reveal">
+      <header class="card__head">
+        <span class="card__id">GRAPH</span>
+        <h3>② 有向无环渲染图 (Render Graph)</h3>
+        <span class="card__path">render_graph.cpp · RenderGraphBuilder</span>
+      </header>
+      <p class="card__body">将所有绘制 pass 的依赖关系、资源生命周期和 Barrier 同步抽象为图结构。由渲染图构建器自动推导演化屏障，避免昂贵的 CPU 多余同步。</p>
+      <ul class="card__feats">
+        <li><i class="b b--ok"></i><code>RenderGraph</code> · <code>RenderGraphBuilder</code> · <code>RenderGraphContext</code></li>
+        <li><i class="b b--ok"></i>自动合并 Barrier、资源重定向及自动显存生命期降噪</li>
+      </ul>
+    </article>
+
+    <article class="card reveal">
+      <header class="card__head">
+        <span class="card__id">GEO</span>
+        <h3>③ GPU 驱动几何剔除 (Mesh Shader)</h3>
+        <span class="card__path">mesh_shader_pass.cpp · 430 LOC</span>
+      </header>
+      <p class="card__body">全面拥抱现代 GPU 图形 API。利用 Mesh Shader (网格着色器) 将多边形分组剪裁和剔除移入 GPU 极速执行，将主线程 CPU 的提交消耗降至冰点。</p>
+      <ul class="card__feats">
+        <li><i class="b b--ok"></i><code>MeshShaderPass</code> —— DX12U FL12.2 硬件级着色剔除</li>
+        <li><i class="b b--ok"></i><code>mesh_debug.ms.hlsl</code> · cluster / meshlet 粗细两级裁剪</li>
+      </ul>
+    </article>
+
+    <article class="card card--wide reveal">
+      <header class="card__head">
+        <span class="card__id">GI</span>
+        <h3>④ 动态全局光照栈 (Global Illumination)</h3>
+        <span class="card__path">global_illumination.cpp · 2,737 LOC · 6 个 GI HLSL Shaders</span>
+      </header>
+      <p class="card__body">内置四套可热切换的全局光照 (GI) 算法，覆盖老旧集显至前沿光追卡。在同一套艺术资源下，提供物理正确的全局光线二次反弹，赋予大世界真实的质感。</p>
+      <div class="card__cols">
+        <ul class="card__feats">
+          <li><i class="b b--ok"></i><b>DDGI 动态漫反射探针</b> —— <code>ddgi.hlsl</code> · 光照探针体积</li>
+          <li><i class="b b--ok"></i><b>屏幕空间探针 GI</b> —— <code>screen_space_probe_gi.ps.hlsl</code></li>
+        </ul>
+        <ul class="card__feats">
+          <li><i class="b b--ok"></i><b>VXGI 体素锥追踪</b> —— 体素化 <code>vxgi_voxelize.cs</code> + 锥追踪</li>
+          <li><i class="b b--wip"></i><b>RTGI 硬件光追 (DXR)</b> —— <code>rtgi.raytracing.hlsl</code>，旗舰级</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="card reveal">
+      <header class="card__head">
+        <span class="card__id">AO</span>
+        <h3>⑤ 高保真环境光遮蔽 (Ambient Occlusion)</h3>
+        <span class="card__path">ambient_occlusion.cpp · 2,011 LOC</span>
+      </header>
+      <p class="card__body">提供空间深度质感。根据不同的硬件配置文件，AO 计算管线将在四种精度级别之间智能自适应缩减。</p>
+      <ul class="card__feats">
+        <li><i class="b b--ok"></i><b>GTAO 结合时域降噪</b> · <b>HBAO</b> · <b>VXAO 体素</b></li>
+        <li><i class="b b--ok"></i><code>gtao.hlsl</code> · <code>hbao.hlsl</code> · <code>vxao.hlsl</code> 统一参数</li>
+      </ul>
+    </article>
+
+    <article class="card reveal">
+      <header class="card__head">
+        <span class="card__id">TAA</span>
+        <h3>⑥ 时域抗锯齿与像素后处理</h3>
+        <span class="card__path">taa.cpp · 711 · post_processing.cpp · 761</span>
+      </header>
+      <p class="card__body">处理画面运动过程中的像素闪烁。TAA 结合 Halton 投影抖动与历史帧动态去重影混合，实现极其干净锐利的画面边缘表现。</p>
+      <ul class="card__feats">
+        <li><i class="b b--ok"></i><code>TemporalAA</code> —— 混合历史缓存，去除运动拖尾残影</li>
+        <li><i class="b b--ok"></i><code>PostProcessing</code> —— 镜头 Bloom、色调映射、运动模糊</li>
+      </ul>
+    </article>
+
+    <article class="card reveal">
+      <header class="card__head">
+        <span class="card__id">ADAPT</span>
+        <h3>⑦ 动态分辨率与性能自适应</h3>
+        <span class="card__path">QualitySettings · PerformanceMonitor</span>
+      </header>
+      <p class="card__body">将算力集中于核心区域。引擎性能监视器可实时触发可变着色率 (VRS) 及贴图回馈图解压，确保极端复杂情况下的帧率平稳。</p>
+      <ul class="card__feats">
+        <li><i class="b b--ok"></i>可变着色率 VRS —— <code>NEXT_VRS_SHADING_RATE=2x2</code> 动态触发</li>
+        <li><i class="b b--ok"></i>采样器反馈 (Sampler Feedback) —— <code>sampler_feedback.cs.hlsl</code></li>
+      </ul>
+    </article>
+
+    <article class="card reveal">
+      <header class="card__head">
+        <span class="card__id">DEBUG</span>
+        <h3>⑧ 全程图形调试视口</h3>
+        <span class="card__path">debug_views.h · rendering_stats.cpp</span>
+      </header>
+      <p class="card__body">杜绝图形调试的黑盒猜测。提供完整的开发期中间 Pass 可视化输出，协助技术美术与图形程序员精准追溯着色漏洞。</p>
+      <ul class="card__feats">
+        <li><i class="b b--ok"></i>13种 <code>DebugViewMode</code>：wireframe · normal · overdraw · depth …</li>
+        <li><i class="b b--ok"></i><code>StatsDisplay</code> 实时显存及着色器开销监控</li>
+      </ul>
+    </article>
+  </div>
+
+  <h3 class="world__sub reveal" style="margin-top:48px">一资产多后端分档适配 —— 不增加美术打包负担</h3>
+  <div class="tickmodel reveal">
+    <div class="tickmodel__row">
+      <span class="tickmodel__k">TIER A · 旗舰画质</span>
+      <span class="tickmodel__v">RTGI + VXGI 融合 + TAA。提供高品质的镜面光与间接光反弹，充分释放光追硬件算力。</span>
+    </div>
+    <div class="tickmodel__row">
+      <span class="tickmodel__k">TIER B · 主流推荐</span>
+      <span class="tickmodel__v">DDGI 混合屏幕空间光线追踪 + VXGI，配合 GTAO 滤波。</span>
+    </div>
+    <div class="tickmodel__row">
+      <span class="tickmodel__k">TIER C · 老旧设备</span>
+      <span class="tickmodel__v">基于 Light Probes (光照探针) 的静态烘焙 + SSAO + 屏幕空间辅助照明，不产生任何实时光线跟踪负担。</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §04 BIG WORLD ============ -->
+<section class="sec sec--world" id="world">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§04</span>
+    <h2 class="sec__title">大世界流送：可预测无感流数据系统</h2>
+    <span class="sec__meta">engine/world · 9,536 LOC</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    为了在大体量、高密度虚拟空间中维持顺畅无感的世界体验，Blame Engine 将空间离散为 Cell 块，依靠速度预测外推提前预读资源。
+  </p>
+
+  <div class="world">
+    <div class="world__block reveal">
+      <h3 class="world__sub">CellLayer —— 10层独立细分架构：按需订阅与加载</h3>
+      <ul class="layers">
+        <li><b>0</b> Terrain</li>
+        <li><b>1</b> StaticMesh</li>
+        <li><b>2</b> Vegetation</li>
+        <li><b>3</b> Props</li>
+        <li><b>4</b> NavMesh</li>
+        <li><b>5</b> Audio</li>
+        <li><b>6</b> HLOD</li>
+        <li><b>7</b> Dynamic</li>
+        <li><b>8</b> Quest</li>
+        <li><b>9</b> Collision</li>
+      </ul>
+      <p class="world__note">这保证了网络、逻辑、可侵入的实体资产能先于昂贵的纹理和网格模型加载，使代码的策略路由计算始终快人一步。</p>
+    </div>
+
+    <div class="world__block reveal">
+      <h3 class="world__sub">CellLoadState —— 8态高并发异步加载管线</h3>
+      <ol class="pipe">
+        <li class="pipe__step" data-st="0"><span class="pipe__n">0</span><span class="pipe__name">Unloaded</span></li>
+        <li class="pipe__step" data-st="1"><span class="pipe__n">1</span><span class="pipe__name">Queued</span></li>
+        <li class="pipe__step" data-st="2"><span class="pipe__n">2</span><span class="pipe__name">Loading</span><em>异步读取 IO</em></li>
+        <li class="pipe__step" data-st="3"><span class="pipe__n">3</span><span class="pipe__name">Decompressing</span><em>多线程 Zstd 解压</em></li>
+        <li class="pipe__step" data-st="4"><span class="pipe__n">4</span><span class="pipe__name">Uploading</span><em>GPU 资源显存上传</em></li>
+        <li class="pipe__step pipe__step--done" data-st="5"><span class="pipe__n">5</span><span class="pipe__name">Loaded</span></li>
+      </ol>
+    </div>
+
+    <div class="world__block reveal">
+      <h3 class="world__sub">流送核心子模块</h3>
+      <div class="cards">
+        <article class="card">
+          <header class="card__head"><span class="card__id">PART</span><h3>WorldPartition</h3><span class="card__path">world_partition.cpp · 395 LOC</span></header>
+          <p class="card__body">空间管理。切分 2D 网格，并在 <code>CellMetadata</code> 中对 Cell 包含的多边形面数、纹理占用及 LOD 关联拓扑进行数据对齐。</p>
+        </article>
+        <article class="card">
+          <header class="card__head"><span class="card__id">WANT</span><h3>InterestManager</h3><span class="card__path">interest_manager.cpp · 499 LOC</span></header>
+          <p class="card__body">输入摄像机视口位置、玩家当前的交互目标以及关卡指引线，算出各分区的关注权重，发起流送订阅申请。</p>
+        </article>
+        <article class="card">
+          <header class="card__head"><span class="card__id">PREDICT</span><h3>PredictionSystem</h3><span class="card__path">prediction_system.cpp · 572 LOC</span></header>
+          <p class="card__body">利用速度矢量与电影相机导轨，提前预测视野在未来 3-5 秒可能切入的分区，向 Async IO 发送预取包命令。</p>
+        </article>
+        <article class="card card--wide">
+          <header class="card__head"><span class="card__id">STREAM</span><h3>StreamingManager —— 调度中枢</h3><span class="card__path">streaming_manager.cpp · 2,065 LOC</span></header>
+          <p class="card__body">调度中枢。接收订阅关系并统筹多线程资源解载、载入与 GPU 复制。设定严格的单帧显存上传带宽阈值，IO 负载超限时优先加载低面数 HLOD 保障画面连续，待显存空间空闲后再悄然缝合高模细节，坚决杜绝瞬间卡顿。</p>
+        </article>
+        <article class="card">
+          <header class="card__head"><span class="card__id">IO</span><h3>AsyncIOSystem</h3><span class="card__path">async_io.cpp · 1,187 LOC</span></header>
+          <p class="card__body">专为世界顺序流设计的异步读取通道。支持批量块请求合并，内置 zstd 快速流式解压，直接在 IO 线程池内跑完。</p>
+        </article>
+        <article class="card">
+          <header class="card__head"><span class="card__id">LOD</span><h3>淘汰与降配</h3><span class="card__path">lod_system.cpp · 501 · eviction_policy.cpp · 423</span></header>
+          <p class="card__body">根据内存预算进行严格的数据逐出（Eviction）。基于优先级的 LRU 回收机制，保证世界分区切换时绝对不卡顿崩塌。</p>
+        </article>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §05 ARCHITECTURE ============ -->
+<section class="sec sec--arch" id="arch">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§05</span>
+    <h2 class="sec__title">分层架构：严格的单向依赖树</h2>
+    <span class="sec__meta">ENGINE STRUCTURE LAYER</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    引擎组织架构的重中之重：<strong>依赖关系单向向下</strong>。上层模块可以任意调用下层，而底层框架对上层完全无感，从物理结构上杜绝循环包含与难以解耦的胶水代码。
+  </p>
+
+  <div class="stack" id="stack">
+    <div class="stack__flow" aria-hidden="true">
+      <span class="stack__flow-label">依 赖 方 向</span>
+      <span class="stack__flow-arrow">↓</span>
+    </div>
+    <ol class="stack__layers">
+      <li class="layer reveal" data-mods="hackops_demo">
+        <span class="layer__lv">L6</span><span class="layer__name">Game Project Layer</span><span class="layer__sub">game/hackops · 具体的玩法逻辑、策略评估与评分规则</span>
+      </li>
+      <li class="layer reveal" data-mods="nvim_surface_probe · assetc · editor">
+        <span class="layer__lv">L5</span><span class="layer__name">Tools Layer</span><span class="layer__sub">命令行探针 · 离线资产编译器 · 编辑器渲染视口</span>
+      </li>
+      <li class="layer reveal" data-mods="task · script">
+        <span class="layer__lv">L4</span><span class="layer__name">Gameplay Framework</span><span class="layer__sub">任务管理器 · 脚本解译沙箱 · 世界通用状态机</span>
+      </li>
+      <li class="layer reveal layer--feature" data-mods="terminal · renderer · world · rhi">
+        <span class="layer__lv">L3</span><span class="layer__name">Feature Modules</span><span class="layer__sub">Terminal (nvim嵌入) · Graphics 渲染栈 · World 空间流送 · RHI API 桥</span>
+      </li>
+      <li class="layer reveal" data-mods="runtime · serialization">
+        <span class="layer__lv">L2</span><span class="layer__name">Runtime Core</span><span class="layer__sub">核心 ECS 世界 · 资产引用句柄管理 · Event Bus 事件总线</span>
+      </li>
+      <li class="layer reveal" data-mods="foundation · jobsystem · log · profiler · compression">
+        <span class="layer__lv">L1</span><span class="layer__name">Foundation Layer</span><span class="layer__sub">内存分配器 · Job System 任务线程池 · 高精度计时器 · zstd/lz4 解压</span>
+      </li>
+      <li class="layer reveal" data-mods="platform">
+        <span class="layer__lv">L0</span><span class="layer__name">Platform Layer</span><span class="layer__sub">OS 窗口句柄挂载 · 进程与管道通信 · 系统级硬件崩溃监控</span>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============ §06 NUMBERS ============ -->
+<section class="sec sec--numbers" id="numbers">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§06</span>
+    <h2 class="sec__title">工程体量：真实的源文件度量数据</h2>
+    <span class="sec__meta">62,445 行 C++ 代码 · 100% 真实统计</span>
+  </div>
+
+  <div class="numbers">
+    <div class="chart reveal" id="chart">
+      <div class="chart__row"><span class="chart__label">renderer (渲染管线)</span><span class="chart__bar"><i style="--w:100%"></i></span><span class="chart__num">33,747</span></div>
+      <div class="chart__row"><span class="chart__label">world (流送/分区)</span><span class="chart__bar"><i style="--w:28.3%"></i></span><span class="chart__num">9,536</span></div>
+      <div class="chart__row"><span class="chart__label">rhi (后端接口)</span><span class="chart__bar"><i style="--w:12.7%"></i></span><span class="chart__num">4,272</span></div>
+      <div class="chart__row"><span class="chart__label">runtime (ECS/底座)</span><span class="chart__bar"><i style="--w:9.3%"></i></span><span class="chart__num">3,126</span></div>
+      <div class="chart__row"><span class="chart__label">serialization (序列化)</span><span class="chart__bar"><i style="--w:6.1%"></i></span><span class="chart__num">2,052</span></div>
+      <div class="chart__row"><span class="chart__label">task (逻辑/任务)</span><span class="chart__bar"><i style="--w:5.7%"></i></span><span class="chart__num">1,916</span></div>
+      <div class="chart__row chart__row--hot"><span class="chart__label">terminal (Nvim 嵌入)</span><span class="chart__bar"><i style="--w:4.6%"></i></span><span class="chart__num">1,549</span></div>
+      <div class="chart__row"><span class="chart__label">script (Lua/编译桥)</span><span class="chart__bar"><i style="--w:3.6%"></i></span><span class="chart__num">1,204</span></div>
+      <div class="chart__row"><span class="chart__label">platform (OS适配)</span><span class="chart__bar"><i style="--w:2.9%"></i></span><span class="chart__num">968</span></div>
+      <div class="chart__row"><span class="chart__label">jobsystem (并行任务)</span><span class="chart__bar"><i style="--w:2.0%"></i></span><span class="chart__num">690</span></div>
+    </div>
+
+    <div class="kpis reveal">
+      <div class="kpi"><b>1,483</b><span>NvimSurface.cpp 行数</span></div>
+      <div class="kpi"><b>2</b><span>后端 DX12 · METAL</span></div>
+      <div class="kpi"><b>69</b><span>.cpp 源文件数</span></div>
+      <div class="kpi"><b>96</b><span>.h 头文件数</span></div>
+      <div class="kpi"><b>22</b><span>CTest 集成测试套件</span></div>
+      <div class="kpi"><b>13,915</b><span>测试专用 LOC</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §07 RUN IT ============ -->
+<section class="sec sec--control" id="run">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§07</span>
+    <h2 class="sec__title">真实运行：编译与测试仿真器</h2>
+    <span class="sec__meta">interactive build terminal</span>
+  </div>
+
+  <p class="sec__intro reveal">下面是直接在仓库终端里编译和运行引擎命令的流程。点击下方控制台的快速指令，观察真实的编译、测试及烟雾测试（Smoke Test）输出。</p>
+
+  <div class="term reveal" id="cliTerminal">
+    <div class="term__bar">
+      <span class="term__dot"></span><span class="term__dot"></span><span class="term__dot"></span>
+      <span class="term__title">terminal — blame-engine developer console</span>
+    </div>
+    <div class="term__body" id="cliOutput">
+      <span class="t-d"># Choose a command below to execute. System is active.</span>
+      <span class="t-c">$ </span><span class="t-cmd">_</span>
+    </div>
+    <div class="term__controls">
+      <button class="term__btn" id="cmdBuild">1. cmake --build (编译开发环境)</button>
+      <button class="term__btn" id="cmdRun">2. hackops_demo (策略世界验证)</button>
+      <button class="term__btn" id="cmdVerify">3. verify_dx12u.ps1 (SM6渲染管线校验)</button>
+      <button class="term__btn" id="cmdCtest">4. ctest (运行引擎回归测试)</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §08 ROADMAP ============ -->
+<section class="sec sec--road" id="road">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§08</span>
+    <h2 class="sec__title">研发路线图与前沿挑战</h2>
+    <span class="sec__meta">TECHNICAL ROADMAP · COMPREHENSIVE DEVELOPMENT</span>
+  </div>
+
+  <p class="sec__intro reveal">要实现工业级的真代码安全执行游戏引擎，仍有几块重要的技术难关需要啃下。我们保持前沿研发过程的完全公开与透明。</p>
+
+  <div class="control__honest reveal">
+    <ul>
+      <li><i class="b b--wip"></i><b>engine/sandbox 沙箱隔离层</b> —— 当前策略直接由宿主 Python 进程或嵌入 Lua 环境执行，存在一定的开发机安全风险。后期计划将运行栈塞入隔离沙箱或轻量容器中。</li>
+      <li><i class="b b--wip"></i><b>World API 逻辑映射桥</b> —— 完善玩家程序读写大世界实体的统一句柄。目前是用“分值”作为间接路由映射，下个阶段将落地真正的双向内存映射桥。</li>
+      <li><i class="b b--wip"></i><b>Ops Workspace 控制面板</b> —— 支持复杂任务中的多策略多文件依赖协作，而不仅仅是单一文件的 Python 入侵钩子。</li>
+      <li><i class="b b--wip"></i><b>终端视口完整字符渲染</b> —— 实现完整的浮动窗口（Floating Window）、外部 CMD 提示符、输入法（IME）的捕获与重定向，以及由 RHI 直接驱动的 C++ 画布缓冲刷新。</li>
+      <li><i class="b b--wip"></i><b>Windows 进程启动验证</b> —— POSIX 进程拉起在 macOS 平台上已经完备；Windows 的 <code>CreateProcess</code> 进程管道控制代码已落地，等待在真机环境中做持续测试。</li>
+      <li><i class="b b--wip"></i><b>逻辑与大世界管线的交织</b> —— 确保流送线程的高吞吐读取与 ECS 并行任务的物理同步，不出现死锁或写读悬挂引用。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer class="foot" id="foot">
+  <div class="foot__big">BLAME<span>//ENGINE</span></div>
+  <div class="foot__grid">
+    <div>
+      <span class="foot__k">前沿技术 / TECHNOLOGY</span>
+      <p>面向高拟真实时模拟。自研 C++17 图形引擎底座，内嵌独立 Neovim 编辑器，通过物理沙箱安全解译执行真实业务策略代码。</p>
+    </div>
+    <div>
+      <span class="foot__k">图形管线 / GRAPHICS</span>
+      <p>Blame Render Stack · 支持 DirectX 12 U 及 Metal API。基于 Render Graph 的有向无环渲染，支持 4 档全局光照。</p>
+    </div>
+    <div>
+      <span class="foot__k">世界流送 / WORLD PARTITION</span>
+      <p>10层独立结构流送 cell，根据视野轨迹运动进行实时外推预测异步读取，配合 Eviction 淘汰机制保障超大规模大世界无感过度。</p>
+    </div>
+  </div>
+  <div class="foot__line">
+    <span>BLAME ENGINE · 世界领先的、面向真实代码运行的 3D 游戏引擎。</span>
+    <span class="foot__blame">自研 C++17 游戏底座 · 研发中 / IN ACTIVE R&D DEVELOPMENT</span>
+  </div>
+</footer>
+
+<script src="main.js"></script>
+</body>
+</html>
