@@ -19,3 +19,4 @@
 | [0009](0009-physics-jolt-backend.md) | 物理:`IPhysicsWorld` 抽象 + 确定性参考后端;Jolt 为可选后端(FetchContent,默认关) | Accepted |
 | [0010](0010-actuation-single-transform-writer.md) | 操控统一:意图驱动物理,Transform 由单一写者拥有(gameplay 层 `ActuationSystem`) | Accepted |
 | [0011](0011-wasm-language-frontend.md) | 玩家语言前端:C++/Rust 编到 wasm32,经 WASM 沙箱后端(wasm3)运行;一套 ABI 两个后端 | Accepted |
+| [0012](0012-wasm-fuel-gas-metering.md) | WASM CPU 燃料:加载期 gas 插桩(自改写模块计费 + 越界 trap),而非引入 wasmtime | Accepted |

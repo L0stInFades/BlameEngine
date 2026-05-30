@@ -30,10 +30,10 @@ namespace Next::sandbox {
 // only retains the loaded module bytes, so one loaded module can be Run() repeatedly in isolation.
 //
 // Security posture vs RefVm: memory safety (WASM bounds-checks every access), capability gating,
-// and the per-run host-call budget all hold here. The one gap is CPU fuel — wasm3 does not meter
-// instructions, so policy.fuel is NOT enforced by this backend (RefVm remains the fuel-metered
-// reference; the production answer for untrusted code is a fuel-metering runtime like wasmtime).
-// RunResult::fuelUsed is therefore reported as 0 here.
+// and the per-run host-call budget all hold here. CPU fuel is also enforced — wasm3 has no native
+// fuel hook, so LoadModule rewrites the module with load-time gas instrumentation (wasm_meter.h):
+// it charges policy.fuel per metered block and traps FuelExhausted when spent, so an infinite loop
+// is bounded, not a hang. RunResult::fuelUsed reports the exact amount consumed (ADR-0012).
 class Wasm3Sandbox final : public ISandbox {
 public:
     bool LoadModule(const uint8_t* image, size_t size, std::string* error) override;

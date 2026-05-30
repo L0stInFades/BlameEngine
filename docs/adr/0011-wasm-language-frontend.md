@@ -54,12 +54,12 @@ map. The same `host_call` ABI carries both. This is the player-language frontend
 Rust needs the `wasm32-unknown-unknown` target. CMake auto-detects and skips a guest if its
 toolchain is absent, so the demo degrades gracefully.
 
-**Known limitation — CPU fuel.** wasm3 does **not** meter instructions, so `SandboxPolicy::fuel`
-is not enforced by this backend (memory safety, capability gating, and the host-call budget *are*).
-`RefVm` remains the fuel-metered, fully-deterministic reference backend. For untrusted code in a
-server-authoritative deployment, the production answer is a fuel-metering runtime (e.g. wasmtime's
-`consume_fuel`) behind the same `ISandbox`, or an instruction-metering transform at load. This is
-recorded in [TECH_DEBT](../TECH_DEBT.md).
+**CPU fuel — RESOLVED by [ADR-0012](0012-wasm-fuel-gas-metering.md).** wasm3 has no native fuel
+hook, so as a follow-up the backend now rewrites each module with **load-time gas instrumentation**:
+`SandboxPolicy::fuel` is charged per metered block and the guest traps `FuelExhausted` when it runs
+out (an infinite loop is bounded, not a hang), with exact `fuelUsed` reported. Memory safety,
+capability gating, and the host-call budget were already enforced. `RefVm` remains the deterministic
+reference backend.
 
 **Determinism.** wasm3 is a pure interpreter (no JIT); the guests here use only the IEEE-754 basic
 ops, so results are deterministic. The float-determinism build flags noted in the audit (F-2) apply

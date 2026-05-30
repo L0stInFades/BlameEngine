@@ -87,7 +87,8 @@ Current limitations:
   algorithms (A*, binary search) already run in a headless world via
   `tools/wasm_demo`. What remains to retire `popen` for HackOps is the wiring:
   compile the Neovim-edited policy to wasm and run it in `Wasm3Sandbox` instead of
-  a host Python process (plus a fuel-metering WASM runtime for untrusted code).
+  a host Python process. CPU fuel for untrusted code is already enforced (load-time
+  gas instrumentation, ADR-0012), so this is now wiring, not missing infrastructure.
 
 ## Why This Matters
 
