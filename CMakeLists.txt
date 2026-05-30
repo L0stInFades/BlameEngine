@@ -90,6 +90,7 @@ add_subdirectory(engine/sandbox)   # ADR-0008: security-first, backend-agnostic 
 add_subdirectory(engine/boundary)  # ADR-0006: sim↔UE5 snapshot stream + command/event queues
 add_subdirectory(engine/physics)   # ADR-0009: IPhysicsWorld + deterministic reference backend (+ optional Jolt)
 add_subdirectory(engine/gameplay)  # ADR-0010: gameplay layer — ActuationSystem (single Transform writer)
+add_subdirectory(engine/level)     # data-driven level authoring + validation + deterministic loading
 # add_subdirectory(engine/animation)
 # add_subdirectory(engine/ai)
 # add_subdirectory(engine/gameplay)

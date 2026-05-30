@@ -160,6 +160,17 @@ add_executable(test_physics_slice
 target_link_libraries(test_physics_slice PRIVATE ${NEXT_TEST_MAIN} next_sandbox next_gameplay next_boundary)
 add_test(NAME PhysicsSliceTest COMMAND test_physics_slice)
 
+# Level-design system: validator (defect gate), loader (transactional/deterministic), win
+# conditions, and an end-to-end load-run-win slice (sandbox guest drives a loaded level to Won).
+add_executable(test_level
+    level/test_level_validator.cpp
+    level/test_level_loader.cpp
+    level/test_level_win_conditions.cpp
+    level/test_level_slice.cpp
+)
+target_link_libraries(test_level PRIVATE ${NEXT_TEST_MAIN} next_level next_sandbox)
+add_test(NAME LevelTest COMMAND test_level)
+
 # Jolt backend smoke test — only when the optional Jolt backend is built (ADR-0009).
 if(BUILD_WITH_JOLT)
     add_executable(test_jolt_physics
@@ -187,6 +198,7 @@ set(NEXT_TEST_TARGETS
     test_physics
     test_actuation
     test_physics_slice
+    test_level
 )
 
 set_target_properties(${NEXT_TEST_TARGETS}
