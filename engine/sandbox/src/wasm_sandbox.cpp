@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include "next/sandbox/wasm_meter.h"
 #include "wasm3.h"
 
 namespace Next::sandbox {
@@ -106,7 +107,15 @@ bool Wasm3Sandbox::LoadModule(const uint8_t* image, size_t size, std::string* er
     if (version != 1) {
         return fail("unsupported WASM version");
     }
-    code_.assign(image, image + size);
+    // Make the module meter its own CPU: rewrite it to charge the exported __fuel global per block
+    // and trap when it runs out (wasm3 has no native fuel hook). Fail-closed — a module the meter
+    // cannot instrument (unknown/SIMD opcode, missing section) is rejected, never run un-metered.
+    const std::vector<uint8_t> raw(image, image + size);
+    std::string meterErr;
+    if (!InstrumentWasmForFuel(raw, code_, &meterErr)) {
+        code_.clear();
+        return fail(meterErr.empty() ? "fuel instrumentation failed" : meterErr.c_str());
+    }
     return true;
 }
 
@@ -162,11 +171,38 @@ RunResult Wasm3Sandbox::Run(const SandboxPolicy& policy, HostGateway& gateway, u
                 if (r != m3Err_none || fn == nullptr) {
                     trap = TrapReason::IllegalInstruction;  // no `run` export
                 } else {
+                    // Load the per-run fuel budget into the metered module's exported __fuel global.
+                    // The gas instrumentation decrements it per block and traps `unreachable` at < 0.
+                    IM3Global fuelG = m3_FindGlobal(mod, kFuelGlobalName);
+                    if (fuelG != nullptr) {
+                        M3TaggedValue v;
+                        v.type = c_m3Type_i64;
+                        v.value.i64 = policy.fuel;
+                        m3_SetGlobal(fuelG, &v);
+                    }
                     const int32_t a = static_cast<int32_t>(arg);
                     r = m3_CallV(fn, a);
+
+                    // Recover the remainder (the global persists across a trap) -> exact fuelUsed.
+                    int64_t remaining = static_cast<int64_t>(policy.fuel);
+                    if (fuelG != nullptr) {
+                        M3TaggedValue rv;
+                        if (m3_GetGlobal(fuelG, &rv) == m3Err_none && rv.type == c_m3Type_i64) {
+                            remaining = static_cast<int64_t>(rv.value.i64);
+                        }
+                    }
+                    const int64_t budget = static_cast<int64_t>(policy.fuel);
+                    const int64_t clamped = remaining < 0 ? 0 : (remaining > budget ? budget : remaining);
+                    result.fuelUsed = static_cast<uint64_t>(budget - clamped);
+
                     if (r != m3Err_none) {
-                        // A structural trap we recorded wins (precise reason); else map the m3 error.
-                        trap = (ctx.structuralTrap != TrapReason::None) ? ctx.structuralTrap : MapM3Error(r);
+                        // Fuel exhaustion surfaces as an `unreachable` trap from __gas with the global
+                        // driven below zero; report it precisely, else a structural trap, else map.
+                        if (fuelG != nullptr && remaining <= 0) {
+                            trap = TrapReason::FuelExhausted;
+                        } else {
+                            trap = (ctx.structuralTrap != TrapReason::None) ? ctx.structuralTrap : MapM3Error(r);
+                        }
                     } else {
                         int32_t out = 0;
                         m3_GetResultsV(fn, &out);
@@ -179,7 +215,6 @@ RunResult Wasm3Sandbox::Run(const SandboxPolicy& policy, HostGateway& gateway, u
         result.trap = trap;
         result.ret = ret;
         result.hostCalls = ctx.hostCalls;
-        result.fuelUsed = 0;  // wasm3 does not meter CPU fuel (see header)
 
         m3_FreeRuntime(rt);  // also frees the loaded module
         m3_FreeEnvironment(env);

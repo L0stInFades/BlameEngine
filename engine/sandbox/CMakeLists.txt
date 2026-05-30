@@ -68,6 +68,7 @@ if(BUILD_WITH_WASM)
 
     add_library(next_sandbox_wasm STATIC
         src/wasm_sandbox.cpp
+        src/wasm_meter.cpp
     )
     target_include_directories(next_sandbox_wasm PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include

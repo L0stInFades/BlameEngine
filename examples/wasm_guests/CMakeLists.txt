@@ -36,6 +36,21 @@ if(WASM_CLANGXX AND WASM_LD)
         COMMENT "wasm guest: C++23 A* -> astar.wasm"
         VERBATIM)
     list(APPEND _guests ${WASM_GUESTS_OUT}/astar.wasm)
+
+    # Adversarial CPU-fuel guests (no Game API import): an infinite loop and a counted loop. They
+    # prove the load-time gas instrumentation bounds untrusted code (FuelExhausted) — see wasm_demo.
+    foreach(g spin busyloop)
+        add_custom_command(
+            OUTPUT ${WASM_GUESTS_OUT}/${g}.wasm
+            COMMAND ${CMAKE_COMMAND} -E env "PATH=${WASM_LD_DIR}:$ENV{PATH}"
+                    ${WASM_CLANGXX} --target=wasm32 -std=c++23 -O2 -nostdlib -fno-exceptions -fno-rtti
+                    -Wl,--no-entry -Wl,--export=run -Wl,--allow-undefined
+                    -o ${WASM_GUESTS_OUT}/${g}.wasm ${CMAKE_CURRENT_SOURCE_DIR}/${g}.cpp
+            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${g}.cpp
+            COMMENT "wasm guest: C++ ${g} -> ${g}.wasm"
+            VERBATIM)
+        list(APPEND _guests ${WASM_GUESTS_OUT}/${g}.wasm)
+    endforeach()
     message(STATUS "NEXT wasm guests: C++ via ${WASM_CLANGXX} (+ ${WASM_LD})")
 else()
     message(WARNING "NEXT wasm guests: no wasm-capable clang++/wasm-ld — skipping C++ A* guest")

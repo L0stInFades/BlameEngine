@@ -168,6 +168,7 @@ void DemoAStar(const std::string& dir) {
     Check(r.ret == truth, "A* path length matches host BFS",
           "guest=" + std::to_string(r.ret) + " truth=" + std::to_string(truth) + " (manhattan=14, detour forced)");
     Check(r.hostCalls > 0, "guest sensed the world via Game API", "hostCalls=" + std::to_string(r.hostCalls));
+    Check(r.fuelUsed > 0, "A* consumed metered CPU fuel (now enforced)", "fuelUsed=" + std::to_string(r.fuelUsed));
 
     // Actuation: the guest issued a MoveTo toward a valid adjacent first step.
     bool moved = false;
@@ -231,6 +232,72 @@ void DemoBinarySearch(const std::string& dir) {
     }
 }
 
+// ---- CPU-fuel metering: untrusted code is bounded by load-time gas instrumentation ----
+void DemoFuel(const std::string& dir) {
+    std::printf("\n== CPU-fuel metering: untrusted code is now BOUNDED (gas instrumentation) ==\n");
+    World world;
+    gameapi::SimClock clock;
+    Entity a = world.CreateEntity();
+    world.AddComponent<TransformComponent>(a);
+    GameApiConfig cfg;
+    cfg.world = &world;
+    cfg.clock = &clock;
+    cfg.self = gameapi::ToEntityId(a);
+    cfg.capabilities = CapabilitySet::PlayerDefault();
+    GameApi api(cfg);
+
+    auto runFuel = [&](const std::string& file, int64_t arg, uint64_t fuel, sandbox::RunResult& out) -> bool {
+        bool ok = false;
+        auto wasm = ReadFile(dir + "/" + file, ok);
+        if (!ok) {
+            Check(false, file + " present", "missing — C++ wasm toolchain unavailable at build?");
+            return false;
+        }
+        api.BeginTick();
+        sandbox::GameApiGateway gw(&api);
+        auto box = sandbox::MakeWasm3Sandbox();
+        std::string err;
+        if (!box->LoadModule(wasm.data(), wasm.size(), &err)) {
+            Check(false, file + " loads (instrumented)", err);
+            return false;
+        }
+        sandbox::SandboxPolicy p;
+        p.memoryBytes = 64 * 1024;
+        p.stackSlots = 2048;
+        p.maxHostCalls = 100000;
+        p.capabilities = CapabilitySet::PlayerDefault();
+        p.fuel = fuel;
+        out = box->Run(p, gw, 0, arg);
+        return true;
+    };
+
+    // 1) An infinite loop — would HANG the host without metering — must trap FuelExhausted.
+    {
+        sandbox::RunResult r;
+        if (runFuel("spin.wasm", 0, 2'000'000, r))
+            Check(r.trap == sandbox::TrapReason::FuelExhausted && r.fuelUsed > 0, "infinite loop traps FuelExhausted",
+                  "trap=" + std::string(sandbox::ToString(r.trap)) + " fuelUsed=" + std::to_string(r.fuelUsed));
+    }
+    // 2) A counted loop completes under an ample budget, returns the sum, and fuelUsed < budget.
+    {
+        sandbox::RunResult r;
+        const int64_t n = 20000;
+        const int64_t expect = 199990000;  // sum 0..19999
+        const uint64_t budget = 100'000'000ull;
+        if (runFuel("busyloop.wasm", n, budget, r))
+            Check(r.trap == sandbox::TrapReason::None && r.ret == expect && r.fuelUsed > 0 && r.fuelUsed < budget,
+                  "counted loop completes; fuel scales with work",
+                  "ret=" + std::to_string(r.ret) + " fuelUsed=" + std::to_string(r.fuelUsed));
+    }
+    // 3) The SAME loop under a tight budget traps before finishing — the bound is real.
+    {
+        sandbox::RunResult r;
+        if (runFuel("busyloop.wasm", 20000, 5'000, r))
+            Check(r.trap == sandbox::TrapReason::FuelExhausted, "same loop traps under a tight budget",
+                  "trap=" + std::string(sandbox::ToString(r.trap)) + " fuelUsed=" + std::to_string(r.fuelUsed));
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -242,6 +309,7 @@ int main() {
 
     DemoAStar(dir);
     DemoBinarySearch(dir);
+    DemoFuel(dir);
 
     std::printf("\n=========== SUMMARY: %d passed, %d failed ===========\n", g_pass, g_fail);
     Logger::Shutdown();
