@@ -108,17 +108,21 @@ struct ISnapshotTransport {                       // 边界只认这个接口
 ```cpp
 // UMirrorSubsystem : public UWorldSubsystem  (UE5 C++;无 Blueprint 玩法、无 UPROPERTY 复制)
 void UMirrorSubsystem::Tick(float dt) {
-    if (const SnapshotBlock* snap = Transport->Acquire()) {       // 取最新(或保留上一帧插值)
-        for (auto& s : Spawns(snap))   SpawnProxy(s.id, s.visual, s.xform);   // 对象池取
-        for (auto& d : Despawns(snap)) RecycleProxy(d);                       // 还池
-        SwapInterpBuffers(snap);                                             // 保留两帧
+    if (const SnapshotBlock* snap = Transport->Acquire()) {       // 取最新(无新帧返回 null)
+        // 应用顺序契约:despawn → spawn → update。视觉切换被编码为同一块里的 despawn(id)+spawn(id,新visual),
+        // 先还池再取池才能用新 mesh 重建;反过来会把刚建的 proxy 拆掉(见 snapshot.h 的 APPLY ORDER CONTRACT)。
+        for (auto& d : Despawns(snap)) RecycleProxy(d);                       // 还池(先)
+        for (auto& s : Spawns(snap))   SpawnProxy(s.id, s.visual, s.xform);   // 对象池取(后)
+        // 指针生命周期契约:Acquire() 返回的指针仅在下次 Acquire() 前有效(槽会被生产者回收复用)。
+        // 要跨帧插值就把需要的记录**拷贝**进 subsystem 自有的两帧缓冲,别留存 slot 裸指针。
+        CopyInterpFramesOut(snap);                                           // 拷出,保留两帧
     }
     ApplyInterpolatedTransforms(GetWorldTime());   // 批量刷 proxy 的 transform(SoA→批处理)
     while (PopEvent(ev)) FireCosmeticCue(ev);       // VFX/音效,纯表现
     while (HasInput())   Transport->PushCommand(CollectInput());
 }
 ```
-要点:**对象池**复用 view Actor(别按实体增删 spawn/destroy);**关闭这些 proxy 的 Actor Tick**,统一在 subsystem 里批量刷;海量人群/载具走 **ISM/HISM 或 Niagara**,不是逐 Actor。`VisualStateId → mesh/material` 是 UE5 侧一张注册表。
+要点:**应用顺序 despawn→spawn→update**(视觉切换=despawn+spawn 同块);`Acquire()` 指针只到下次 `Acquire()` 前有效,跨帧插值要**拷出**记录(别留存 slot 指针);**对象池**复用 view Actor(别按实体增删 spawn/destroy);**关闭这些 proxy 的 Actor Tick**,统一在 subsystem 里批量刷;海量人群/载具走 **ISM/HISM 或 Niagara**,不是逐 Actor。`VisualStateId → mesh/material` 是 UE5 侧一张注册表。
 
 ## 8. 与我们 ECS 的对接(近零拷贝)
 
