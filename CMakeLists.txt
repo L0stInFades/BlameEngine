@@ -33,6 +33,15 @@ option(BUILD_LEGACY_LOG "Build deprecated next_log compatibility module" OFF)
 # Jolt (ADR-0009) is an OPTIONAL backend fetched on demand — off by default so the trunk build
 # and CI never need the Jolt toolchain or network access.
 option(BUILD_WITH_JOLT "Fetch JoltPhysics and build the Jolt physics backend (next_physics_jolt)" OFF)
+# Player-LANGUAGE frontend (ADR-0011): an optional WASM sandbox backend (wasm3) that runs real
+# C++/Rust compiled to wasm32, plus a demo that compiles classic algorithms and runs them in the
+# headless world. OFF by default so the trunk build/CI never need wasm3 or a wasm toolchain.
+option(BUILD_WITH_WASM "Fetch wasm3 and build the WASM sandbox backend + C++/Rust guest demo" OFF)
+
+# wasm3 is C; the headless core is CXX-only, so enable the C language on demand for the WASM backend.
+if(BUILD_WITH_WASM)
+    enable_language(C)
+endif()
 
 # Rendering and physics are EXTERNAL (ADR-0005): rendering = UE5, physics = Jolt.
 # This repo is the headless authoritative-world core; it does NOT build a renderer or RHI.
@@ -84,6 +93,13 @@ add_subdirectory(engine/gameplay)  # ADR-0010: gameplay layer — ActuationSyste
 # add_subdirectory(engine/animation)
 # add_subdirectory(engine/ai)
 # add_subdirectory(engine/gameplay)
+
+# Player-language frontend demo (ADR-0011): compile C++/Rust guests to wasm32 and run them in a
+# headless world via the WASM sandbox backend. Guests must be built before the harness.
+if(BUILD_WITH_WASM)
+    add_subdirectory(examples/wasm_guests)
+    add_subdirectory(tools/wasm_demo)
+endif()
 
 # Tools
 if(BUILD_TOOLS)
