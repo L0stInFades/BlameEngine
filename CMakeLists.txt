@@ -89,6 +89,7 @@ add_subdirectory(engine/gameplay)  # ADR-0010: gameplay layer — ActuationSyste
 if(BUILD_TOOLS)
     add_subdirectory(tools/assetc)
     add_subdirectory(tools/compression_probe)
+    add_subdirectory(tools/sandbox_audit)  # ADR-0008: headless sandbox security-audit harness
     if(BUILD_TERMINAL)
         add_subdirectory(tools/nvim_surface_cpp_probe)
     endif()

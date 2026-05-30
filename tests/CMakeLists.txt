@@ -120,6 +120,7 @@ add_test(NAME GameApiTest COMMAND test_gameapi)
 add_executable(test_sandbox
     sandbox/test_ref_vm.cpp
     sandbox/test_sandbox_security.cpp
+    sandbox/test_sandbox_boundary.cpp
 )
 target_link_libraries(test_sandbox PRIVATE ${NEXT_TEST_MAIN} next_sandbox)
 add_test(NAME SandboxTest COMMAND test_sandbox)
