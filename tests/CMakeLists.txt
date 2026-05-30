@@ -107,6 +107,67 @@ add_executable(test_script_system
 target_link_libraries(test_script_system PRIVATE ${NEXT_TEST_MAIN} next_script)
 add_test(NAME ScriptSystemTest COMMAND test_script_system)
 
+# Game API Tests (ADR-0007): capability gating, deterministic reads, write-as-intent, ABI dispatch
+add_executable(test_gameapi
+    gameapi/test_game_api.cpp
+)
+target_link_libraries(test_gameapi PRIVATE ${NEXT_TEST_MAIN} next_gameapi)
+next_enable_format_warnings(test_gameapi)
+add_test(NAME GameApiTest COMMAND test_gameapi)
+
+# Sandbox Tests (ADR-0008): VM mechanics + traps, and the security contract (capability gating,
+# zero ambient authority, determinism) verified against the real Game API gateway.
+add_executable(test_sandbox
+    sandbox/test_ref_vm.cpp
+    sandbox/test_sandbox_security.cpp
+)
+target_link_libraries(test_sandbox PRIVATE ${NEXT_TEST_MAIN} next_sandbox)
+add_test(NAME SandboxTest COMMAND test_sandbox)
+
+# Boundary Tests (ADR-0006): triple buffer, SPSC rings, snapshot publisher diffing, transport
+add_executable(test_boundary
+    boundary/test_boundary.cpp
+)
+target_link_libraries(test_boundary PRIVATE ${NEXT_TEST_MAIN} next_boundary)
+add_test(NAME BoundaryTest COMMAND test_boundary)
+
+# Vertical slice (ADR-0005): sandbox -> Game API -> authoritative world -> UE5 snapshot, headless.
+add_executable(test_vertical_slice
+    integration/test_vertical_slice.cpp
+)
+target_link_libraries(test_vertical_slice PRIVATE ${NEXT_TEST_MAIN} next_sandbox next_boundary)
+add_test(NAME VerticalSliceTest COMMAND test_vertical_slice)
+
+# Physics Tests (ADR-0009): IPhysicsWorld contract + deterministic reference backend + PhysicsSystem
+add_executable(test_physics
+    physics/test_physics.cpp
+)
+target_link_libraries(test_physics PRIVATE ${NEXT_TEST_MAIN} next_physics)
+add_test(NAME PhysicsTest COMMAND test_physics)
+
+# Gameplay actuation tests (ADR-0010): the single Transform-writer mover (intents -> physics/direct)
+add_executable(test_actuation
+    gameplay/test_actuation.cpp
+)
+target_link_libraries(test_actuation PRIVATE ${NEXT_TEST_MAIN} next_gameplay)
+add_test(NAME ActuationTest COMMAND test_actuation)
+
+# Full-stack physics slice (ADR-0005/0009/0010): sandbox -> Game API -> actuation -> physics -> snapshot
+add_executable(test_physics_slice
+    integration/test_physics_slice.cpp
+)
+target_link_libraries(test_physics_slice PRIVATE ${NEXT_TEST_MAIN} next_sandbox next_gameplay next_boundary)
+add_test(NAME PhysicsSliceTest COMMAND test_physics_slice)
+
+# Jolt backend smoke test — only when the optional Jolt backend is built (ADR-0009).
+if(BUILD_WITH_JOLT)
+    add_executable(test_jolt_physics
+        physics/test_jolt_physics.cpp
+    )
+    target_link_libraries(test_jolt_physics PRIVATE ${NEXT_TEST_MAIN} next_physics_jolt)
+    add_test(NAME JoltPhysicsTest COMMAND test_jolt_physics)
+endif()
+
 # Run all tests with CTest
 set(NEXT_TEST_TARGETS
     test_foundation
@@ -118,6 +179,13 @@ set(NEXT_TEST_TARGETS
     test_world_streaming
     test_task_system
     test_script_system
+    test_gameapi
+    test_sandbox
+    test_boundary
+    test_vertical_slice
+    test_physics
+    test_actuation
+    test_physics_slice
 )
 
 set_target_properties(${NEXT_TEST_TARGETS}

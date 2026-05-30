@@ -29,6 +29,10 @@ option(BUILD_TESTS "Build tests" ON)
 option(BUILD_TERMINAL "Build Neovim terminal integration" ON)
 option(BUILD_GAME_HACKOPS "Build HackOps prototype game target" OFF)
 option(BUILD_LEGACY_LOG "Build deprecated next_log compatibility module" OFF)
+# Physics: the headless core ships a deterministic reference backend with no third-party deps.
+# Jolt (ADR-0009) is an OPTIONAL backend fetched on demand — off by default so the trunk build
+# and CI never need the Jolt toolchain or network access.
+option(BUILD_WITH_JOLT "Fetch JoltPhysics and build the Jolt physics backend (next_physics_jolt)" OFF)
 
 # Rendering and physics are EXTERNAL (ADR-0005): rendering = UE5, physics = Jolt.
 # This repo is the headless authoritative-world core; it does NOT build a renderer or RHI.
@@ -69,7 +73,14 @@ endif()
 add_subdirectory(engine/world)     # CP7: World Streaming
 add_subdirectory(engine/script)    # CP8: Script System
 add_subdirectory(engine/task)      # CP9: Task System
-# add_subdirectory(engine/physics)
+
+# Moat modules (ADR-0005): the single Game API contract, the player-code sandbox, and the
+# headless→UE5 boundary. Self-contained, headless, no UE5/game dependencies.
+add_subdirectory(engine/gameapi)   # ADR-0007: capability-domained, versioned, deterministic contract
+add_subdirectory(engine/sandbox)   # ADR-0008: security-first, backend-agnostic player-code runtime
+add_subdirectory(engine/boundary)  # ADR-0006: sim↔UE5 snapshot stream + command/event queues
+add_subdirectory(engine/physics)   # ADR-0009: IPhysicsWorld + deterministic reference backend (+ optional Jolt)
+add_subdirectory(engine/gameplay)  # ADR-0010: gameplay layer — ActuationSystem (single Transform writer)
 # add_subdirectory(engine/animation)
 # add_subdirectory(engine/ai)
 # add_subdirectory(engine/gameplay)
