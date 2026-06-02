@@ -129,6 +129,43 @@ TEST(VegetationStreaming, FailsClosedWhenLayerMissing) {
     std::filesystem::remove_all(dir, ec);
 }
 
+TEST(VegetationStreaming, MemoryAccountingTracksVegetationLayer) {
+    const std::filesystem::path dir = MakeTempDir();
+
+    StreamingManager mgr;
+    ASSERT_TRUE(mgr.Initialize(BaseConfig(dir)));
+    mgr.Update(0.016f, Vec3(0, 0, 0), Vec3(0, 0, -1), Vec3(0, 0, 0));
+    const std::vector<CellCoord> loaded = mgr.GetLoadedCells();
+    ASSERT_FALSE(loaded.empty());
+    const CellCoord coord = loaded.front();
+
+    const std::filesystem::path resolvedDir(mgr.GetConfig().cellDataDirectory);
+    std::filesystem::create_directories(resolvedDir);
+    FlatTerrainSampler terrain;
+    const CookResult cooked = CookVegetationCell(MakeForest(), terrain, coord.x, coord.z, 64.0f);
+    ASSERT_TRUE(cooked.ok);
+    ASSERT_TRUE(WriteCellFile(CellPath(resolvedDir, coord.x, coord.z).string(), cooked.bytes));
+
+    const size_t baseline = mgr.GetMemoryUsage();
+    mgr.LoadCellLayer(coord, CellLayer::Vegetation);
+    const size_t afterLoad = mgr.GetMemoryUsage();
+
+    const CellData* cell = mgr.GetCell(coord);
+    ASSERT_NE(cell, nullptr);
+    const auto it = cell->layers.find(CellLayer::Vegetation);
+    ASSERT_NE(it, cell->layers.end());
+    // The streaming budget now sees exactly the vegetation layer's bytes (it didn't before this fix).
+    EXPECT_EQ(afterLoad - baseline, it->second.size);
+    EXPECT_GT(it->second.size, 0u);
+
+    mgr.UnloadCellLayer(coord, CellLayer::Vegetation);
+    EXPECT_EQ(mgr.GetMemoryUsage(), baseline);  // freed back to baseline
+
+    mgr.Shutdown();
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
 TEST(VegetationStreaming, PlaceholderLayerHasNoData) {
     const std::filesystem::path dir = MakeTempDir();
 

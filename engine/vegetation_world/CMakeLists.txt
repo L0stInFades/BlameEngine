@@ -9,6 +9,7 @@ add_library(next_vegetation_world STATIC
     src/vegetation_store.cpp
     src/vegetation_query.cpp
     src/vegetation_view.cpp
+    src/vegetation_streaming_system.cpp
 )
 
 target_include_directories(next_vegetation_world PUBLIC

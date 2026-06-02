@@ -1076,6 +1076,7 @@ void StreamingManager::LoadCellLayer(const CellCoord& coord, CellLayer layer, fl
             ld.state = CellLoadState::Loaded;
             cell->layers[layer] = ld;
             cell->metadata.SetLayerPresent(layer);
+            cell->metadata.memorySize += layerBytes.size();  // count toward the streaming memory budget
             return;
         }
     }
@@ -1145,6 +1146,8 @@ void StreamingManager::UnloadCellLayer(const CellCoord& coord, CellLayer layer) 
     if (it->second.data && memoryPool_) {
         memoryPool_->Free(it->second.data);
     }
+    const uint64_t freed = it->second.size;
+    cell->metadata.memorySize = (cell->metadata.memorySize >= freed) ? (cell->metadata.memorySize - freed) : 0;
     cell->layers.erase(it);
     cell->metadata.SetLayerPresent(layer, false);
 }
