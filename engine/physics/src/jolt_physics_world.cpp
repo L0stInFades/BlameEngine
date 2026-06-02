@@ -143,6 +143,16 @@ public:
             settings.mLinearVelocity =
                 JPH::Vec3(desc.linearVelocity[0], desc.linearVelocity[1], desc.linearVelocity[2]);
         }
+        // Respect BodyDesc::mass for moving bodies so the SAME level data (BodyDefData.mass in
+        // level_def.h:52-60) produces comparable dynamics on the Jolt backend and the reference
+        // backend. CalculateInertia keeps the shape's natural inertia tensor and scales it to the
+        // requested mass, so a heavier sphere has proportionally larger inertia. mass <= 0 is
+        // normalized to 1 to match ReferencePhysicsWorld::CreateBody's defensive default.
+        if (motion != JPH::EMotionType::Static) {
+            const float mass = desc.mass > 0.0f ? desc.mass : 1.0f;
+            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+            settings.mMassPropertiesOverride.mMass = mass;
+        }
 
         JPH::Body* body = bi.CreateBody(settings);
         if (body == nullptr) {
@@ -236,14 +246,48 @@ public:
             }
         }
         result.distance = hit.mFraction * maxDistance;
-        const JPH::RVec3 p = ray.GetPointOnRay(hit.mFraction);
-        result.point[0] = static_cast<float>(p.GetX());
-        result.point[1] = static_cast<float>(p.GetY());
-        result.point[2] = static_cast<float>(p.GetZ());
-        // The simple CastRay does not return a surface normal; report one facing back along the ray.
-        result.normal[0] = -dir.GetX();
-        result.normal[1] = -dir.GetY();
-        result.normal[2] = -dir.GetZ();
+        const JPH::RVec3 worldPoint = ray.GetPointOnRay(hit.mFraction);
+        result.point[0] = static_cast<float>(worldPoint.GetX());
+        result.point[1] = static_cast<float>(worldPoint.GetY());
+        result.point[2] = static_cast<float>(worldPoint.GetZ());
+
+        // Real surface normal via the leaf shape. Jolt's CastRay returns mSubShapeID2 (the leaf hit
+        // by the ray); we then ask that shape for its local normal at the world hit point, and
+        // rotate the result by the body's world transform. Falls back to -direction only when the
+        // shape (e.g. via a future compound) cannot produce a normal at this point.
+        const JPH::BodyInterface& bi = system_.GetBodyInterface();
+        const JPH::ShapeRefC shape = bi.GetShape(hit.mBodyID);
+        const JPH::RMat44 worldFromLocal = bi.GetWorldTransform(hit.mBodyID);
+        if (shape != nullptr) {
+            const JPH::Vec3 localPoint =
+                JPH::Vec3(worldFromLocal.Inversed() * worldPoint);
+            const JPH::Vec3 localNormal = shape->GetSurfaceNormal(hit.mSubShapeID2, localPoint);
+            const JPH::Vec3 worldNormal = worldFromLocal.Multiply3x3(localNormal);
+            const float nl = worldNormal.Length();
+            if (nl > 0.0f) {
+                const JPH::Vec3 n = worldNormal / nl;
+                // Surface normal must face back along the ray (toward the origin), matching the
+                // contract documented in physics_world.h:50 and the reference backend's behavior.
+                const float facing = n.Dot(-dir);
+                if (facing >= 0.0f) {
+                    result.normal[0] = n.GetX();
+                    result.normal[1] = n.GetY();
+                    result.normal[2] = n.GetZ();
+                } else {
+                    result.normal[0] = -n.GetX();
+                    result.normal[1] = -n.GetY();
+                    result.normal[2] = -n.GetZ();
+                }
+            } else {
+                result.normal[0] = -dir.GetX();
+                result.normal[1] = -dir.GetY();
+                result.normal[2] = -dir.GetZ();
+            }
+        } else {
+            result.normal[0] = -dir.GetX();
+            result.normal[1] = -dir.GetY();
+            result.normal[2] = -dir.GetZ();
+        }
         return result;
     }
 

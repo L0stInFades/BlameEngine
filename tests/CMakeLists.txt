@@ -160,6 +160,23 @@ add_executable(test_physics_slice
 target_link_libraries(test_physics_slice PRIVATE ${NEXT_TEST_MAIN} next_sandbox next_gameplay next_boundary)
 add_test(NAME PhysicsSliceTest COMMAND test_physics_slice)
 
+# Jolt-backed full vertical-slice (ADR-0009): same end-to-end shape as test_physics_slice but the
+# physics world is the Jolt backend, proving the Jolt path cooperates with the rest of the engine
+# (sandbox -> Game API -> resolver -> ActuationSystem -> PhysicsSystem -> SnapshotPublisher).
+if(BUILD_WITH_JOLT)
+    add_executable(test_jolt_physics_slice
+        integration/test_jolt_physics_slice.cpp
+    )
+    target_link_libraries(test_jolt_physics_slice PRIVATE
+        ${NEXT_TEST_MAIN}
+        next_sandbox
+        next_gameplay
+        next_boundary
+        next_physics_jolt
+    )
+    add_test(NAME JoltPhysicsSliceTest COMMAND test_jolt_physics_slice)
+endif()
+
 # Level-design system: validator (defect gate), loader (transactional/deterministic), win
 # conditions, and an end-to-end load-run-win slice (sandbox guest drives a loaded level to Won).
 add_executable(test_level
@@ -171,12 +188,20 @@ add_executable(test_level
 target_link_libraries(test_level PRIVATE ${NEXT_TEST_MAIN} next_level next_sandbox)
 add_test(NAME LevelTest COMMAND test_level)
 
-# Jolt backend smoke test — only when the optional Jolt backend is built (ADR-0009).
+# Jolt backend tests — only when the optional Jolt backend is built (ADR-0009). The test target
+# links next_physics_jolt (the Jolt IPhysicsWorld), next_gameplay (ActuationSystem) and next_gameapi
+# (MoveTarget) so the same scenario suite as the reference backend (drop, raycast + surface normal,
+# PhysicsSystem, ActuationSystem, mass override, determinism) can exercise the Jolt path end-to-end.
 if(BUILD_WITH_JOLT)
     add_executable(test_jolt_physics
         physics/test_jolt_physics.cpp
     )
-    target_link_libraries(test_jolt_physics PRIVATE ${NEXT_TEST_MAIN} next_physics_jolt)
+    target_link_libraries(test_jolt_physics PRIVATE
+        ${NEXT_TEST_MAIN}
+        next_physics_jolt
+        next_gameplay
+        next_gameapi
+    )
     add_test(NAME JoltPhysicsTest COMMAND test_jolt_physics)
 endif()
 
@@ -200,6 +225,9 @@ set(NEXT_TEST_TARGETS
     test_physics_slice
     test_level
 )
+if(BUILD_WITH_JOLT)
+    list(APPEND NEXT_TEST_TARGETS test_jolt_physics test_jolt_physics_slice)
+endif()
 
 set_target_properties(${NEXT_TEST_TARGETS}
     PROPERTIES
