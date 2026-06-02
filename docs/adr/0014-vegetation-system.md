@@ -61,15 +61,21 @@
 - **全部植被都走快照流当普通实体** — 部分采用:适合少量可交互植株;海量静态植被用 per-cell blob(流送友好、UE5 直灌 HISM)更省。
 - **Poisson-disk(Bridson)散布** — 暂未采用:抖动网格 + 间距拒绝更易做到**按 cell 切块、顺序无关、确定性**(Bridson 的 active-list 依赖全局顺序);后续若需更优 blue-noise 可在保持 per-cell 确定性的前提下替换。
 
-## 交付状态(2026-06-03,经只读审计校正)
+## 交付状态(2026-06-03:交付门已全过)
 
-本 ADR 的**决策**(越界判定 + 新建 `engine/vegetation` 核心)成立、已实现、单测 + ASan 通过。**但这只是 headless 核心切片,不构成可交付的"引擎植被系统"**——交付链路在 world streaming / cook / UE5 消费端 / 玩法集成处仍断。因此 README/ARCHITECTURE 的成熟度从 ~~usable~~ 改为 **prototype(core-only)**;**在下列验收门全过前,对外不得称"植被系统可交付",只能称"核心切片"**。
+只读审计(2026-06-03)曾正确指出此前只是 headless 核心切片、交付链路在 streaming/cook/UE5/玩法处断,故一度降级为 `prototype(core-only)`。**随后把整条链路打通**,下列验收门**全部实现并测试**(全套 26 测试 + ASan 从完整构建通过),成熟度回升为 **usable**:
 
-**真正"交付"的验收门(全部需在干净 checkout 上通过):**
-1. **layered `.ncell` v2**:`engine/world/include/next/streaming/cell_file_format.h` 增加 layer chunk table(layer id / offset / 压缩前后大小 / codec / version),v1 单 StaticMesh payload 兼容。验收:world 单测能在同一 cell 同时加载 StaticMesh + Vegetation 两层。
-2. **vegetation cook**:`tools/assetc` 增命令(如 `next_assetc vegetation <def.json> <terrain> <cellX> <cellZ> <out.nveg>`):parse → `VegetationValidator::Validate`(坏 def fail-closed)→ terrain sample → `ScatterCell` → `PackCell` → 写 vegetation chunk。验收:样例 cell 产稳定 golden hash。
-3. **`StreamingManager::LoadCellLayer(Vegetation)` 读真实 chunk**:当前固定 placeholder(`engine/world/src/streaming_manager.cpp:1069`,且 `.ncell` 加载只填 StaticMesh:`:633`)。改为分配 layer 内存、填 `cell->layers[CellLayer::Vegetation]`,`allowPlaceholderCellLoad=false` 时缺层即失败。验收:加载后 `UnpackCell` 成功。
-4. **runtime vegetation store**:加载后索引 + `QueryRadiusXZ`/按 flags 查询 + destructible overlay;**`instanceId` 改为确定性无碰撞键**((cellX,cellZ,species,ordinal) 或 64-bit;当前仅 32-bit hash);**`logicalRadius` 写入实例或随 cell 加载 species table**(当前 `logicalRadius` 只在 `VegetationSpecies`、未进 `VegetationInstance` blob)。
-5. **Game API / gameplay 接入**:`IWorldQuery` 或新植被 facade 把 `VegBlocksLineOfSight` + `logicalRadius` 计入 LOS/raycast/sense;destructible 植株有状态覆盖并产生 sim→UE5 事件。
-6. **UE5 只读消费合同**:`engine/boundary` 增植被 cell load/unload 消息或共享 payload 视图(当前 `snapshot.h` 只发逐实体 `RenderableComponent`,无批量植被 payload)。UE5 侧仅:按 `visual` 分组 → 查 `VisualStateId`→mesh/material registry → 批量写 HISM/Nanite/foliage;**不持有放置、不跑 PCG 权威**。
-7. **最小内容样例 + 端到端验收**:2 species + 1 VisualStateId registry + ~9 baked cells;端到端测试 cook → world 加载 Vegetation 层 → unpack → query → boundary/mock UE consumer 收到实例。CI 门:`test_vegetation test_world_streaming test_asset_compiler test_boundary` 全绿 + 该端到端测试,且从**干净 checkout** 重新配置/编译证明整条链路。
+1. ✅ **layered `.ncell`**:`engine/world/.../layered_cell_file.h`(`NCL2` chunk 表:layer id/codec/offset/压缩前后大小 + 每层 codec),v1 单载荷 `.ncell` 不动。`LayeredCellTest`:同一 cell 同时携带 StaticMesh + Vegetation,Zstd/LZ4 往返,fail-closed。
+2. ✅ **vegetation cook**:`next_vegetation_world` 的 `CookVegetationCell`(validate→scatter→`PackCell`→`PackLayeredCell`)+ `assetc vegetation <def.txt> <cellX> <cellZ> <cellSize> <out> [codec]` CLI + 文本 def 解析。`VegetationCookTest`:坏 def fail-closed、golden 字节稳定、与直接 scatter 逐字节一致。
+3. ✅ **`LoadCellLayer(Vegetation)` 真实 IO**:读 layered cell 文件、`ExtractLayer`、`memoryPool_` 分配填 `cell->layers[Vegetation]`,`allowPlaceholderCellLoad=false` 缺层 fail-closed(占位层 data==null 可区分)。`VegetationStreamingTest`。
+4. ✅ **runtime `VegetationStore`**:`(cell,ordinal)` 无碰撞键、`QueryRadius`/`AllLive`/按 flags、destructible overlay;**`instanceId` 改为每 cell ordinal**、**`logicalRadius` 入 `VegetationInstance`**(48 字节)。`VegetationStoreTest`。
+5. ✅ **Game API / gameplay**:`VegetationWorldQuery : gameapi::IWorldQuery`(植被=竖直圆柱,**复合进既有 Sense raycast**,与物理 fallback 取近)+ `SegmentBlockedByVegetation` + `DestroyVegetation`→`VegetationDestroyedEvent`。`VegetationQueryTest`。
+6. ✅ **UE5 只读消费合同**:破坏走 `boundary::GameEvent`(`ToBoundaryEvent`,纯表现);批量 per-cell payload + `MockVegetationConsumer`(按 `visual` 分 HISM 桶、load/unload/destroy),**不持有放置、不跑 PCG**。`VegetationViewTest`。
+7. ✅ **端到端纵切面**:`VegetationSliceTest` = cook→write `.nlc`→`LoadCellLayer`→store+mock consumer(同字节同实例)→LOS→破坏(sim 与 view 同步)→unload。全部 vegetation 测试已进 `code-quality.yml`。
+
+**诚实残留(非"植被系统"完整性缺口,而是边界/后续):**
+- **UE5 端是忠实 mock**:仓内无 UE 工程,且 `engine/*` 红线不依赖 UE5——真正的 Unreal `MirrorSubsystem` C++ 属于(尚不存在的)UE5 客户端工程。本 ADR 交付的是**契约 + 可被消费的字节 + 消费者模拟**。
+- **cook CLI 用平地形**:cook **库** terrain-agnostic(任意 `ITerrainSampler`);真实 heightmap/Jolt 地形源是单独的事。
+- **StaticMesh async 单载荷管线保持 v1**(未迁 layered):刻意非目标,避免动复杂的 async/memorypool 管线;layered 格式已能携带 StaticMesh(已测)。
+- **scatter 同构建可复现、非跨平台逐位**(`cos`/`sqrt` 末位);baked blob 才是跨平台产物。
+- **网格生成 OSS**(ez-tree/tree-gen)接入真实内容管线仍属后续;核心只转发 `VisualStateId`,registry 在 UE5 侧。

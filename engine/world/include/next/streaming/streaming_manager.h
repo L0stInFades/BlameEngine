@@ -89,16 +89,14 @@ struct StreamingStatistics {
 
     // Per-frame scheduler-budget accounting (see StreamingManagerConfig budgets). These
     // describe the most recent Update() frame.
-    uint64_t uploadBytesThisFrame = 0;   // cell bytes committed/uploaded during the last Update
-    uint32_t loadStartsThisFrame = 0;    // load pipelines started during the last Update
-    uint32_t budgetDeferredCells = 0;    // completions deferred by the upload budget last Update
+    uint64_t uploadBytesThisFrame = 0;  // cell bytes committed/uploaded during the last Update
+    uint32_t loadStartsThisFrame = 0;   // load pipelines started during the last Update
+    uint32_t budgetDeferredCells = 0;   // completions deferred by the upload budget last Update
 
     uint64_t PendingCellCount() const {
         return static_cast<uint64_t>(loadingCells) + static_cast<uint64_t>(queuedCells);
     }
-    uint64_t ActiveCellCount() const {
-        return static_cast<uint64_t>(loadedCells) + PendingCellCount();
-    }
+    uint64_t ActiveCellCount() const { return static_cast<uint64_t>(loadedCells) + PendingCellCount(); }
     bool HasLoadedCells() const { return loadedCells != 0; }
     bool HasPendingCells() const { return PendingCellCount() != 0; }
     bool HasActiveCells() const { return ActiveCellCount() != 0; }
@@ -129,10 +127,8 @@ struct StreamingCellInfo {
 
     bool IsLoaded() const { return state == CellLoadState::Loaded; }
     bool IsPending() const {
-        return state == CellLoadState::Queued ||
-               state == CellLoadState::Loading ||
-               state == CellLoadState::Decompressing ||
-               state == CellLoadState::Uploading;
+        return state == CellLoadState::Queued || state == CellLoadState::Loading ||
+               state == CellLoadState::Decompressing || state == CellLoadState::Uploading;
     }
     bool IsUnloading() const { return state == CellLoadState::Unloading; }
     bool IsError() const { return state == CellLoadState::Error; }
@@ -147,22 +143,20 @@ struct StreamingCellInfo {
     float MemoryToDiskRatio() const {
         return dataSize == 0 ? 0.0f : static_cast<float>(memorySize) / static_cast<float>(dataSize);
     }
-    float ClampedCellSize(float minimumSize = 1.0f) const {
-        return cellSize < minimumSize ? minimumSize : cellSize;
-    }
+    float ClampedCellSize(float minimumSize = 1.0f) const { return cellSize < minimumSize ? minimumSize : cellSize; }
 };
 
 // ===== Streaming Manager Configuration =====
 
 struct StreamingManagerConfig {
     // Memory budget
-    size_t memoryBudgetMB = 2048;        // Total memory budget for streaming
-    size_t vertexDataBudgetMB = 512;     // Budget for vertex/index data
-    size_t textureBudgetMB = 1024;       // Budget for textures
+    size_t memoryBudgetMB = 2048;     // Total memory budget for streaming
+    size_t vertexDataBudgetMB = 512;  // Budget for vertex/index data
+    size_t textureBudgetMB = 1024;    // Budget for textures
 
     // Performance targets
-    float targetLoadTime = 0.016f;       // Target load time per cell (60fps)
-    float maxStallTime = 0.033f;         // Maximum time to block on streaming (30fps)
+    float targetLoadTime = 0.016f;  // Target load time per cell (60fps)
+    float maxStallTime = 0.033f;    // Maximum time to block on streaming (30fps)
 
     // Streaming parameters
     float loadRadius = 256.0f;
@@ -177,12 +171,12 @@ struct StreamingManagerConfig {
 
     // Prediction settings
     bool enablePrediction = true;
-    float predictionTime = 2.0f;         // Predict N seconds ahead
-    uint32_t predictionSamples = 8;      // Number of prediction samples
+    float predictionTime = 2.0f;     // Predict N seconds ahead
+    uint32_t predictionSamples = 8;  // Number of prediction samples
 
     // Eviction policy
     EvictionStrategy evictionStrategy = EvictionStrategy::LRU;
-    float evictionThreshold = 0.9f;      // Evict when 90% of budget used
+    float evictionThreshold = 0.9f;  // Evict when 90% of budget used
 
     // IO settings
     uint32_t maxConcurrentLoads = 16;
@@ -193,8 +187,8 @@ struct StreamingManagerConfig {
     // Update() commits, so a burst of async completions can't stall the terminal/UI thread.
     // maxConcurrentLoads already bounds in-flight decompression; these bound per-frame commit
     // throughput (bytes uploaded to memory/GPU) and how many new pipelines start per frame.
-    uint64_t maxUploadBytesPerFrame = 0; // cap on cell bytes committed/uploaded per frame
-    uint32_t maxLoadStartsPerFrame = 0;  // cap on new load (read+decompress) pipelines started per frame
+    uint64_t maxUploadBytesPerFrame = 0;  // cap on cell bytes committed/uploaded per frame
+    uint32_t maxLoadStartsPerFrame = 0;   // cap on new load (read+decompress) pipelines started per frame
 
     // Debug settings
     bool enableProfiling = true;
@@ -212,7 +206,8 @@ struct StreamingManagerConfig {
     // If a cell file is missing and allowPlaceholderCellLoad==true, the cell will be marked loaded
     // with placeholder memory usage (keeps demos running without authoring data).
     std::wstring cellDataDirectory = L"data/world/cells";
-    std::wstring cellFileExtension = L".ncell"; // also supports ".npkg"
+    std::wstring cellFileExtension = L".ncell";   // also supports ".npkg"
+    std::wstring layeredCellExtension = L".nlc";  // layered multi-layer cell file (e.g. Vegetation); ADR-0014
     bool allowPlaceholderCellLoad = true;
     uint64_t placeholderCellSizeBytes = 256 * 1024;
 };
@@ -314,6 +309,11 @@ private:
     void ProcessUnloadQueue();
     void ProcessCellOpCompletions();
 
+    // Synchronously read one layer's decompressed bytes from the layered cell file (ADR-0014):
+    // <cellDataDirectory>/cell_X_Z<layeredCellExtension>. Returns false if the file or the layer is
+    // absent. Used by LoadCellLayer for non-StaticMesh layers (e.g. Vegetation).
+    bool TryReadLayeredCellLayer(const CellCoord& coord, CellLayer layer, std::vector<uint8_t>& out) const;
+
     // Cell lifecycle
     struct CellLoadRequest {
         CellCoord coord;
@@ -373,8 +373,8 @@ private:
     struct ActiveCellOp {
         Next::JobHandle job;
         uint64_t asyncRequestId = 0;
-        std::wstring filePath;     // cell package path
-        std::string packageName;   // derived from file stem
+        std::wstring filePath;    // cell package path
+        std::string packageName;  // derived from file stem
         uint64_t fileBytes = 0;
         bool packageBacked = false;
         std::vector<uint8_t> rawReadBuffer;
@@ -427,5 +427,5 @@ private:
     bool initialized_;
 };
 
-} // namespace Streaming
-} // namespace Next
+}  // namespace Streaming
+}  // namespace Next

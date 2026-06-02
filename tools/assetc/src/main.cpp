@@ -1,57 +1,69 @@
 #include "next/foundation/logger.h"
 #include "asset_compiler.h"
+#include "next/vegetation_world/vegetation_cook.h"
 #include <iostream>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <cstdlib>
 
 int main(int argc, char* argv[]) {
     Next::Logger::Initialize();
-    
+
     std::cout << "NEXT Asset Compiler (CP3)" << std::endl;
     std::cout << "==========================" << std::endl;
-    
+
     if (argc < 2) {
         std::cout << "Usage:" << std::endl;
         std::cout << "  next_assetc test <output_dir>  - Generate test assets for CP3" << std::endl;
         std::cout << "  next_assetc compile <input> <output> - Compile single asset" << std::endl;
-        std::cout << "  next_assetc cell <input.bin> <output.ncell> [none|lz4|zstd] - Compile streaming cell" << std::endl;
-        std::cout << "  next_assetc import <input.obj> <output.npkg> - Compile a model into a package (mesh only for now)" << std::endl;
-        std::cout << "  next_assetc package <name> <output> [--compress=auto|none|lz4|zstd] <assets...> - Create package" << std::endl;
+        std::cout << "  next_assetc cell <input.bin> <output.ncell> [none|lz4|zstd] - Compile streaming cell"
+                  << std::endl;
+        std::cout
+            << "  next_assetc import <input.obj> <output.npkg> - Compile a model into a package (mesh only for now)"
+            << std::endl;
+        std::cout
+            << "  next_assetc package <name> <output> [--compress=auto|none|lz4|zstd] <assets...> - Create package"
+            << std::endl;
+        std::cout << "  next_assetc vegetation <def.txt> <cellX> <cellZ> <cellSize> <out.ncell> [none|lz4|zstd] - Cook "
+                     "a vegetation layer cell"
+                  << std::endl;
         return 1;
     }
-    
+
     Next::AssetCompiler compiler;
     std::string command = argv[1];
-    
+
     if (command == "test") {
         if (argc < 3) {
             std::cout << "Error: Output directory required for test command" << std::endl;
             return 1;
         }
-        
+
         std::string outputDir = argv[2];
         NEXT_LOG_INFO("Generating test assets in: %s", outputDir.c_str());
-        
+
         if (!compiler.GenerateTestAssets(outputDir)) {
             NEXT_LOG_ERROR("Failed to generate test assets");
             return 1;
         }
-        
+
         NEXT_LOG_INFO("Test assets generated successfully");
         std::cout << "Test assets generated in: " << outputDir << std::endl;
-        
+
     } else if (command == "compile") {
         if (argc < 4) {
             std::cout << "Error: Input and output paths required for compile command" << std::endl;
             return 1;
         }
-        
+
         std::string inputPath = argv[2];
         std::string outputPath = argv[3];
-        
+
         // Determine asset type from extension
         std::filesystem::path path(inputPath);
         std::string ext = path.extension().string();
-        
+
         bool success = false;
         if (ext == ".obj" || ext == ".fbx") {
             success = compiler.CompileMesh(inputPath, outputPath);
@@ -63,12 +75,12 @@ int main(int argc, char* argv[]) {
             NEXT_LOG_ERROR("Unsupported file extension: %s", ext.c_str());
             return 1;
         }
-        
+
         if (!success) {
             NEXT_LOG_ERROR("Failed to compile asset: %s", inputPath.c_str());
             return 1;
         }
-        
+
         NEXT_LOG_INFO("Asset compiled successfully: %s -> %s", inputPath.c_str(), outputPath.c_str());
 
     } else if (command == "cell") {
@@ -86,8 +98,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        NEXT_LOG_INFO("Streaming cell compiled successfully: %s -> %s",
-                      inputPath.c_str(), outputPath.c_str());
+        NEXT_LOG_INFO("Streaming cell compiled successfully: %s -> %s", inputPath.c_str(), outputPath.c_str());
 
     } else if (command == "import") {
         if (argc < 4) {
@@ -126,13 +137,13 @@ int main(int argc, char* argv[]) {
         }
 
         NEXT_LOG_INFO("Import succeeded: %s -> %s", inputPath.c_str(), packagePath.c_str());
-        
+
     } else if (command == "package") {
         if (argc < 5) {
             std::cout << "Error: Package name, output path, and asset files required" << std::endl;
             return 1;
         }
-        
+
         std::string packageName = argv[2];
         std::string outputPath = argv[3];
         std::string compression = "auto";
@@ -153,21 +164,80 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        NEXT_LOG_INFO("Creating package: %s with %zu assets (compression=%s)",
-                      packageName.c_str(), assetFiles.size(), compression.c_str());
+        NEXT_LOG_INFO("Creating package: %s with %zu assets (compression=%s)", packageName.c_str(), assetFiles.size(),
+                      compression.c_str());
 
         if (!compiler.CreatePackage(packageName, assetFiles, outputPath, compression)) {
             NEXT_LOG_ERROR("Failed to create package");
             return 1;
         }
-        
+
         NEXT_LOG_INFO("Package created successfully: %s", outputPath.c_str());
-        
+
+    } else if (command == "vegetation") {
+        // next_assetc vegetation <def.txt> <cellX> <cellZ> <cellSize> <out.ncell> [none|lz4|zstd]
+        // Cooks a layered cell file carrying the Vegetation layer. CLI uses flat ground; the cook
+        // library is terrain-agnostic (any ITerrainSampler).
+        if (argc < 7) {
+            std::cout << "Error: vegetation requires <def.txt> <cellX> <cellZ> <cellSize> <out.ncell> [none|lz4|zstd]"
+                      << std::endl;
+            return 1;
+        }
+        const std::string defPath = argv[2];
+        const int32_t cellX = static_cast<int32_t>(std::atoi(argv[3]));
+        const int32_t cellZ = static_cast<int32_t>(std::atoi(argv[4]));
+        const float cellSize = static_cast<float>(std::atof(argv[5]));
+        const std::string outPath = argv[6];
+        const std::string codecName = argc >= 8 ? argv[7] : "none";
+
+        std::ifstream defFile(defPath, std::ios::binary);
+        if (!defFile) {
+            NEXT_LOG_ERROR("vegetation: cannot open def file %s", defPath.c_str());
+            return 1;
+        }
+        std::stringstream ss;
+        ss << defFile.rdbuf();
+        const std::string defText = ss.str();
+
+        Next::vegetation::VegetationDef def;
+        std::string parseErr;
+        if (!Next::vegetation::ParseVegetationDefText(defText, def, parseErr)) {
+            NEXT_LOG_ERROR("vegetation: def parse error: %s", parseErr.c_str());
+            return 1;
+        }
+
+        Next::Streaming::CellFileCompression codec = Next::Streaming::CellFileCompression::None;
+        if (codecName == "lz4") {
+            codec = Next::Streaming::CellFileCompression::LZ4;
+        } else if (codecName == "zstd") {
+            codec = Next::Streaming::CellFileCompression::Zstd;
+        } else if (codecName != "none") {
+            NEXT_LOG_ERROR("vegetation: unknown codec %s (use none|lz4|zstd)", codecName.c_str());
+            return 1;
+        }
+
+        Next::vegetation::FlatTerrainSampler terrain;
+        const Next::vegetation::CookResult result =
+            Next::vegetation::CookVegetationCell(def, terrain, cellX, cellZ, cellSize, codec);
+        if (!result.ok) {
+            NEXT_LOG_ERROR("vegetation: def rejected (%zu validation errors)", result.report.errors.size());
+            for (const auto& e : result.report.errors) {
+                NEXT_LOG_ERROR("  - %s: %s", Next::vegetation::ToString(e.code), e.detail.c_str());
+            }
+            return 1;
+        }
+        if (!Next::vegetation::WriteCellFile(outPath, result.bytes)) {
+            NEXT_LOG_ERROR("vegetation: failed to write %s", outPath.c_str());
+            return 1;
+        }
+        NEXT_LOG_INFO("vegetation: cooked %zu instances -> %s (%zu bytes)", result.instanceCount, outPath.c_str(),
+                      result.bytes.size());
+
     } else {
         std::cout << "Error: Unknown command: " << command << std::endl;
         return 1;
     }
-    
+
     Next::Logger::Shutdown();
     return 0;
 }

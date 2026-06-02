@@ -92,6 +92,7 @@ add_subdirectory(engine/physics)   # ADR-0009: IPhysicsWorld + deterministic ref
 add_subdirectory(engine/gameplay)  # ADR-0010: gameplay layer — ActuationSystem (single Transform writer)
 add_subdirectory(engine/level)     # data-driven level authoring + validation + deterministic loading
 add_subdirectory(engine/vegetation)  # ADR-0014: data-driven species + deterministic per-cell scatter (core owns placement; UE5 renders)
+add_subdirectory(engine/vegetation_world)  # ADR-0014: vegetation<->world integration (cook + runtime store)
 # add_subdirectory(engine/animation)
 # add_subdirectory(engine/ai)
 # add_subdirectory(engine/gameplay)

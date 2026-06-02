@@ -198,6 +198,67 @@ target_link_libraries(test_vegetation PRIVATE ${NEXT_TEST_MAIN} next_vegetation)
 next_enable_format_warnings(test_vegetation)
 add_test(NAME VegetationTest COMMAND test_vegetation)
 
+# Layered cell file format (ADR-0014): multi-layer chunk table (StaticMesh + Vegetation + ...),
+# per-chunk codec, fail-closed parse. Links next_world (which pulls next_compression).
+add_executable(test_layered_cell
+    world/test_layered_cell_file.cpp
+)
+target_link_libraries(test_layered_cell PRIVATE ${NEXT_TEST_MAIN} next_world)
+next_enable_format_warnings(test_layered_cell)
+add_test(NAME LayeredCellTest COMMAND test_layered_cell)
+
+# Vegetation cook (ADR-0014): def -> validate (fail-closed) -> scatter -> pack -> layered cell file,
+# plus the text-def parser. Golden-hash stability + round-trip through ExtractLayer/UnpackCell.
+add_executable(test_vegetation_cook
+    vegetation_world/test_vegetation_cook.cpp
+)
+target_link_libraries(test_vegetation_cook PRIVATE ${NEXT_TEST_MAIN} next_vegetation_world)
+next_enable_format_warnings(test_vegetation_cook)
+add_test(NAME VegetationCookTest COMMAND test_vegetation_cook)
+
+# Vegetation streaming integration (ADR-0014): cook a layered cell -> StreamingManager loads the
+# Vegetation layer via real IO -> bytes round-trip to the cooked instances; fail-closed when missing.
+add_executable(test_vegetation_streaming
+    vegetation_world/test_vegetation_streaming.cpp
+)
+target_link_libraries(test_vegetation_streaming PRIVATE ${NEXT_TEST_MAIN} next_vegetation_world)
+next_enable_format_warnings(test_vegetation_streaming)
+add_test(NAME VegetationStreamingTest COMMAND test_vegetation_streaming)
+
+# Runtime vegetation store (ADR-0014): index, radius/flags query, destructible overlay, deterministic order.
+add_executable(test_vegetation_store
+    vegetation_world/test_vegetation_store.cpp
+)
+target_link_libraries(test_vegetation_store PRIVATE ${NEXT_TEST_MAIN} next_vegetation_world)
+next_enable_format_warnings(test_vegetation_store)
+add_test(NAME VegetationStoreTest COMMAND test_vegetation_store)
+
+# Vegetation gameplay queries (ADR-0014): segment LOS/cover + IWorldQuery raycast adapter (composes
+# with a physics fallback) + destructible removal -> sim event.
+add_executable(test_vegetation_query
+    vegetation_world/test_vegetation_query.cpp
+)
+target_link_libraries(test_vegetation_query PRIVATE ${NEXT_TEST_MAIN} next_vegetation_world)
+next_enable_format_warnings(test_vegetation_query)
+add_test(NAME VegetationQueryTest COMMAND test_vegetation_query)
+
+# Vegetation view contract (ADR-0014): bulk per-cell payload + boundary GameEvent for destruction,
+# verified by a faithful UE5 consumer stand-in (groups by visual into HISM buckets; holds no authority).
+add_executable(test_vegetation_view
+    vegetation_world/test_vegetation_view.cpp
+)
+target_link_libraries(test_vegetation_view PRIVATE ${NEXT_TEST_MAIN} next_vegetation_world)
+next_enable_format_warnings(test_vegetation_view)
+add_test(NAME VegetationViewTest COMMAND test_vegetation_view)
+
+# End-to-end vertical slice (ADR-0014): cook -> stream load -> store + UE-mirror -> LOS -> destroy -> unload.
+add_executable(test_vegetation_slice
+    vegetation_world/test_vegetation_slice.cpp
+)
+target_link_libraries(test_vegetation_slice PRIVATE ${NEXT_TEST_MAIN} next_vegetation_world)
+next_enable_format_warnings(test_vegetation_slice)
+add_test(NAME VegetationSliceTest COMMAND test_vegetation_slice)
+
 # Jolt backend tests — only when the optional Jolt backend is built (ADR-0009). The test target
 # links next_physics_jolt (the Jolt IPhysicsWorld), next_gameplay (ActuationSystem) and next_gameapi
 # (MoveTarget) so the same scenario suite as the reference backend (drop, raycast + surface normal,
@@ -235,6 +296,13 @@ set(NEXT_TEST_TARGETS
     test_physics_slice
     test_level
     test_vegetation
+    test_layered_cell
+    test_vegetation_cook
+    test_vegetation_streaming
+    test_vegetation_store
+    test_vegetation_query
+    test_vegetation_view
+    test_vegetation_slice
 )
 if(BUILD_WITH_JOLT)
     list(APPEND NEXT_TEST_TARGETS test_jolt_physics test_jolt_physics_slice)
