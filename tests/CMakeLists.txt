@@ -198,6 +198,15 @@ target_link_libraries(test_vegetation PRIVATE ${NEXT_TEST_MAIN} next_vegetation)
 next_enable_format_warnings(test_vegetation)
 add_test(NAME VegetationTest COMMAND test_vegetation)
 
+# Vegetation on real terrain (ADR-0014): HeightmapTerrainSampler — on-surface placement, altitude
+# bands, slope exclusion over an actual sloped heightmap (not flat).
+add_executable(test_vegetation_terrain
+    vegetation/test_vegetation_terrain.cpp
+)
+target_link_libraries(test_vegetation_terrain PRIVATE ${NEXT_TEST_MAIN} next_vegetation)
+next_enable_format_warnings(test_vegetation_terrain)
+add_test(NAME VegetationTerrainTest COMMAND test_vegetation_terrain)
+
 # Layered cell file format (ADR-0014): multi-layer chunk table (StaticMesh + Vegetation + ...),
 # per-chunk codec, fail-closed parse. Links next_world (which pulls next_compression).
 add_executable(test_layered_cell
@@ -275,6 +284,14 @@ target_link_libraries(test_vegetation_streaming_system PRIVATE ${NEXT_TEST_MAIN}
 next_enable_format_warnings(test_vegetation_streaming_system)
 add_test(NAME VegetationStreamingSystemTest COMMAND test_vegetation_streaming_system)
 
+# Adversarial parser fuzz (ADR-0014): random/truncated/bit-flipped bytes vs every parser under ASan/UBSan.
+add_executable(test_vegetation_fuzz
+    vegetation_world/test_vegetation_fuzz.cpp
+)
+target_link_libraries(test_vegetation_fuzz PRIVATE ${NEXT_TEST_MAIN} next_vegetation_world)
+next_enable_format_warnings(test_vegetation_fuzz)
+add_test(NAME VegetationFuzzTest COMMAND test_vegetation_fuzz)
+
 # Jolt backend tests — only when the optional Jolt backend is built (ADR-0009). The test target
 # links next_physics_jolt (the Jolt IPhysicsWorld), next_gameplay (ActuationSystem) and next_gameapi
 # (MoveTarget) so the same scenario suite as the reference backend (drop, raycast + surface normal,
@@ -312,6 +329,7 @@ set(NEXT_TEST_TARGETS
     test_physics_slice
     test_level
     test_vegetation
+    test_vegetation_terrain
     test_layered_cell
     test_vegetation_cook
     test_vegetation_streaming
@@ -321,6 +339,7 @@ set(NEXT_TEST_TARGETS
     test_vegetation_slice
     test_vegetation_scale
     test_vegetation_streaming_system
+    test_vegetation_fuzz
 )
 if(BUILD_WITH_JOLT)
     list(APPEND NEXT_TEST_TARGETS test_jolt_physics test_jolt_physics_slice)
