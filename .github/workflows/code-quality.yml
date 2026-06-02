@@ -42,14 +42,14 @@ jobs:
           test_foundation test_jobsystem test_runtime test_world_streaming
           test_asset_compiler test_task_system test_script_system
           test_gameapi test_sandbox test_boundary test_vertical_slice test_physics test_actuation
-          test_physics_slice test_level
+          test_physics_slice test_level test_vegetation
       - name: Run tests under sanitizers
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: >
           ctest --test-dir out/build/asan --output-on-failure
-          -R "FoundationTest|JobSystemTest|RuntimeTest|WorldStreamingTest|AssetCompilerTest|TaskSystemTest|ScriptSystemTest|GameApiTest|SandboxTest|BoundaryTest|VerticalSliceTest|PhysicsTest|ActuationTest|PhysicsSliceTest|LevelTest"
+          -R "FoundationTest|JobSystemTest|RuntimeTest|WorldStreamingTest|AssetCompilerTest|TaskSystemTest|ScriptSystemTest|GameApiTest|SandboxTest|BoundaryTest|VerticalSliceTest|PhysicsTest|ActuationTest|PhysicsSliceTest|LevelTest|VegetationTest"
 
   # Static analysis with cppcheck (advisory: surfaces issues without blocking the build).
   cppcheck:

@@ -188,6 +188,16 @@ add_executable(test_level
 target_link_libraries(test_level PRIVATE ${NEXT_TEST_MAIN} next_level next_sandbox)
 add_test(NAME LevelTest COMMAND test_level)
 
+# Vegetation system (ADR-0014): deterministic per-cell scatter, fail-closed validation, slope/altitude/
+# mask filters, min-spacing, and the CellLayer::Vegetation blob round-trip. Pure next_vegetation —
+# headless, no UE5/world/runtime coupling.
+add_executable(test_vegetation
+    vegetation/test_vegetation.cpp
+)
+target_link_libraries(test_vegetation PRIVATE ${NEXT_TEST_MAIN} next_vegetation)
+next_enable_format_warnings(test_vegetation)
+add_test(NAME VegetationTest COMMAND test_vegetation)
+
 # Jolt backend tests — only when the optional Jolt backend is built (ADR-0009). The test target
 # links next_physics_jolt (the Jolt IPhysicsWorld), next_gameplay (ActuationSystem) and next_gameapi
 # (MoveTarget) so the same scenario suite as the reference backend (drop, raycast + surface normal,
@@ -224,6 +234,7 @@ set(NEXT_TEST_TARGETS
     test_actuation
     test_physics_slice
     test_level
+    test_vegetation
 )
 if(BUILD_WITH_JOLT)
     list(APPEND NEXT_TEST_TARGETS test_jolt_physics test_jolt_physics_slice)
