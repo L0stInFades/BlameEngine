@@ -1,5 +1,6 @@
 #include "next/vegetation_world/vegetation_query.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -29,7 +30,11 @@ float PointSegmentDistSq(float px, float pz, float ax, float az, float bx, float
 }  // namespace
 
 bool SegmentBlockedByVegetation(const VegetationStore& store, float ax, float az, float bx, float bz) {
-    const std::vector<VegetationKey> blockers = store.AllLive(VegBlocksLineOfSight);
+    // Broadphase: only blockers whose cylinder can touch the segment's (radius-expanded) AABB.
+    const float margin = store.MaxLoadedRadius();
+    const std::vector<VegetationKey> blockers =
+        store.QueryAABB(std::min(ax, bx) - margin, std::min(az, bz) - margin, std::max(ax, bx) + margin,
+                        std::max(az, bz) + margin, VegBlocksLineOfSight);
     for (const VegetationKey& k : blockers) {
         const VegetationInstance* p = store.Find(k);
         if (p == nullptr || p->logicalRadius <= 0.0f) {
@@ -64,7 +69,14 @@ gameapi::RaycastResult VegetationWorldQuery::Raycast(const float origin[3], cons
         const float dy = direction[1] / dlen;
         const float dz = direction[2] / dlen;
 
-        const std::vector<VegetationKey> blockers = store_->AllLive(VegBlocksLineOfSight);
+        // Broadphase: gather blockers in the ray segment's AABB, expanded by the largest plant radius.
+        const float ex = origin[0] + dx * maxDistance;
+        const float ez = origin[2] + dz * maxDistance;
+        const float margin = store_->MaxLoadedRadius();
+        const std::vector<VegetationKey> blockers =
+            store_->QueryAABB(std::min(origin[0], ex) - margin, std::min(origin[2], ez) - margin,
+                              std::max(origin[0], ex) + margin, std::max(origin[2], ez) + margin, VegBlocksLineOfSight);
+
         for (const VegetationKey& k : blockers) {
             const VegetationInstance* p = store_->Find(k);
             if (p == nullptr || p->logicalRadius <= 0.0f) {
@@ -106,12 +118,12 @@ gameapi::RaycastResult VegetationWorldQuery::Raycast(const float origin[3], cons
                 hx = origin[0] + dx * t;
                 hy = origin[1] + dy * t;
                 hz = origin[2] + dz * t;
-                const float ex = hx - cx;
-                const float ez = hz - cz;
-                const float nlen = std::sqrt(ex * ex + ez * ez);
+                const float gx = hx - cx;
+                const float gz = hz - cz;
+                const float nlen = std::sqrt(gx * gx + gz * gz);
                 if (nlen > 1e-6f) {
-                    nx = ex / nlen;
-                    nz = ez / nlen;
+                    nx = gx / nlen;
+                    nz = gz / nlen;
                 } else {
                     nx = -dx;
                     nz = -dz;

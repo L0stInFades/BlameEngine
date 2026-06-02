@@ -259,6 +259,14 @@ target_link_libraries(test_vegetation_slice PRIVATE ${NEXT_TEST_MAIN} next_veget
 next_enable_format_warnings(test_vegetation_slice)
 add_test(NAME VegetationSliceTest COMMAND test_vegetation_slice)
 
+# Scale / correctness-at-scale (ADR-0014): broadphase grid queries vs brute force over ~10k instances.
+add_executable(test_vegetation_scale
+    vegetation_world/test_vegetation_scale.cpp
+)
+target_link_libraries(test_vegetation_scale PRIVATE ${NEXT_TEST_MAIN} next_vegetation_world)
+next_enable_format_warnings(test_vegetation_scale)
+add_test(NAME VegetationScaleTest COMMAND test_vegetation_scale)
+
 # Jolt backend tests — only when the optional Jolt backend is built (ADR-0009). The test target
 # links next_physics_jolt (the Jolt IPhysicsWorld), next_gameplay (ActuationSystem) and next_gameapi
 # (MoveTarget) so the same scenario suite as the reference backend (drop, raycast + surface normal,
@@ -303,6 +311,7 @@ set(NEXT_TEST_TARGETS
     test_vegetation_query
     test_vegetation_view
     test_vegetation_slice
+    test_vegetation_scale
 )
 if(BUILD_WITH_JOLT)
     list(APPEND NEXT_TEST_TARGETS test_jolt_physics test_jolt_physics_slice)
