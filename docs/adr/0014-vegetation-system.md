@@ -79,3 +79,16 @@
 - **StaticMesh async 单载荷管线保持 v1**(未迁 layered):刻意非目标,避免动复杂的 async/memorypool 管线;layered 格式已能携带 StaticMesh(已测)。
 - **scatter 同构建可复现、非跨平台逐位**(`cos`/`sqrt` 末位);baked blob 才是跨平台产物。
 - **网格生成 OSS**(ez-tree/tree-gen)接入真实内容管线仍属后续;核心只转发 `VisualStateId`,registry 在 UE5 侧。
+
+## 硬化轮(2026-06-03):"能编译/测试绿 ≠ 收工"
+
+在"端到端打通"之后,针对"绿测掩盖的真实缺口"又做了一轮硬化(均有测试,30 套 ASan 全绿,RelWithDebInfo 亦绿):
+
+- **性能/规模**:空间查询/LOS raycast 原本走 `AllLive()` = O(全部已加载实例),开放世界会爆。改为**均匀网格 broadphase**(`QueryAABB`/`QueryRadius`/raycast 走它),`GatherCandidates` 取 dense-range 与 populated-bucket 的较小者(避免大半径扫空桶——一版草稿曾把整套测试从 ~10s 拖到 506s)。`VegetationScaleTest` 用 ~1 万实例对**暴力扫描**逐一核对正确性。
+- **运行系统**:`VegetationStreamingSystem::Sync()` 每帧把 `StreamingManager` 的 load/unload 自动喂给 store(自动 ingest/evict),不再是测试里手工接线。
+- **内存计入**:植被层字节经 `CellData::MemorySize()` 计入流送预算/eviction(此前不可见)。
+- **真实地形**:`HeightmapTerrainSampler`(双线性高度 + 梯度法线 + mask)证明 scatter 在真实坡地上正确(on-surface、海拔带、坡度排除)。
+- **对抗 fuzz**:三个 parser 在 ASan/UBSan 下吃 1 万+ 随机/截断/位翻转输入 → 无 OOB/UB、全 fail-closed。
+- **对抗 review(1 轮,4 角度 + 验证 + 补扫)** 在我自己的代码里查出 **8 个真实 bug** 并全部修复 + 加测:per-cell cap 跨物种溢出、退化法线毒化坡度过滤、`memorySize += ` 与 StaticMesh `=` 路径冲突、alloc 失败 fail-open、Sync 只认 coord 导致 reload 后陈旧、heightmap 数组越界、`BucketOf` float→int UB、`UnpackCell` 无 instanceCount 上限。
+
+**仍诚实保留的边界/后续**(非"绿测掩盖",而是已知范围):UE5 端仍是 mock(仓内无 UE 工程);植被层走**同步**读路径而非 async 流送管线(刻意,避免重写复杂 async/内存池);Sync 的 (ptr,size) token 不区分"同指针同大小但内容不同"的 reload(需 per-layer 版本号);store 用 `std::map`(确定性)而非 `unordered_map`(性能)是有意取舍;若干测试 fixture(`MakeForest`)可抽公共头。
