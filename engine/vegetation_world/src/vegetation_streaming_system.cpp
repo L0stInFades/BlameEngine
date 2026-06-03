@@ -1,5 +1,7 @@
 #include "next/vegetation_world/vegetation_streaming_system.h"
 
+#include <unordered_set>
+
 namespace Next::vegetation {
 
 using Next::Streaming::CellCoord;
@@ -11,7 +13,8 @@ size_t VegetationStreamingSystem::Sync(const Next::Streaming::StreamingManager& 
     size_t changed = 0;
     std::unordered_set<CellCoord, CellCoord::Hash> nowLoaded;
 
-    // Ingest cells that have a real (non-placeholder) Vegetation layer the store doesn't have yet.
+    // Ingest cells with a real Vegetation layer the store doesn't have yet, OR whose layer bytes changed
+    // (an in-place unload+reload between Syncs keeps the coord but yields a different allocation/size).
     for (const CellCoord& coord : manager.GetLoadedCells()) {
         const CellData* cell = manager.GetCell(coord);
         if (cell == nullptr) {
@@ -23,11 +26,15 @@ size_t VegetationStreamingSystem::Sync(const Next::Streaming::StreamingManager& 
             continue;  // no real vegetation data on this cell
         }
         nowLoaded.insert(coord);
-        if (ingested_.find(coord) == ingested_.end()) {
-            const bool ok =
-                store_.LoadCell(coord.x, coord.z, static_cast<const uint8_t*>(it->second.data), it->second.size);
-            if (ok) {
-                ingested_.insert(coord);
+
+        const void* dataPtr = it->second.data;
+        const size_t dataSize = it->second.size;
+        const auto ingested = ingested_.find(coord);
+        const bool fresh = ingested == ingested_.end();
+        const bool reloaded = !fresh && (ingested->second.first != dataPtr || ingested->second.second != dataSize);
+        if (fresh || reloaded) {
+            if (store_.LoadCell(coord.x, coord.z, static_cast<const uint8_t*>(dataPtr), dataSize)) {
+                ingested_[coord] = std::make_pair(dataPtr, dataSize);  // LoadCell replaces on reload
                 ++changed;
             }
         }
@@ -35,8 +42,8 @@ size_t VegetationStreamingSystem::Sync(const Next::Streaming::StreamingManager& 
 
     // Evict cells the store tracks that are no longer loaded with vegetation.
     for (auto it = ingested_.begin(); it != ingested_.end();) {
-        if (nowLoaded.find(*it) == nowLoaded.end()) {
-            store_.UnloadCell(it->x, it->z);
+        if (nowLoaded.find(it->first) == nowLoaded.end()) {
+            store_.UnloadCell(it->first.x, it->first.z);
             it = ingested_.erase(it);
             ++changed;
         } else {

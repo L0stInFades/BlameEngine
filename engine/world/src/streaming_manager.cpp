@@ -1060,13 +1060,9 @@ void StreamingManager::LoadCellLayer(const CellCoord& coord, CellLayer layer, fl
             if (!mem) {
                 NEXT_LOG_ERROR("LoadCellLayer: failed to allocate %zu bytes for layer=%u cell(%d,%d)",
                                layerBytes.size(), static_cast<uint32_t>(layer), coord.x, coord.z);
-                if (!config_.allowPlaceholderCellLoad) {
-                    return;
-                }
-                // else fall through to the placeholder path below
-            } else {
-                std::memcpy(mem, layerBytes.data(), layerBytes.size());
+                return;  // had real cooked data but couldn't allocate -> fail-closed, never fake a placeholder
             }
+            std::memcpy(mem, layerBytes.data(), layerBytes.size());
         }
         if (mem != nullptr || layerBytes.empty()) {
             CellData::LayerData ld;
@@ -1075,8 +1071,7 @@ void StreamingManager::LoadCellLayer(const CellCoord& coord, CellLayer layer, fl
             ld.size = layerBytes.size();
             ld.state = CellLoadState::Loaded;
             cell->layers[layer] = ld;
-            cell->metadata.SetLayerPresent(layer);
-            cell->metadata.memorySize += layerBytes.size();  // count toward the streaming memory budget
+            cell->metadata.SetLayerPresent(layer);  // memory is counted via CellData::MemorySize() (sums layers)
             return;
         }
     }
@@ -1146,9 +1141,7 @@ void StreamingManager::UnloadCellLayer(const CellCoord& coord, CellLayer layer) 
     if (it->second.data && memoryPool_) {
         memoryPool_->Free(it->second.data);
     }
-    const uint64_t freed = it->second.size;
-    cell->metadata.memorySize = (cell->metadata.memorySize >= freed) ? (cell->metadata.memorySize - freed) : 0;
-    cell->layers.erase(it);
+    cell->layers.erase(it);  // memory recount is automatic: CellData::MemorySize() sums the remaining layers
     cell->metadata.SetLayerPresent(layer, false);
 }
 

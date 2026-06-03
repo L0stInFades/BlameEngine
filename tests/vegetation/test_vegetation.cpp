@@ -272,6 +272,20 @@ TEST(Vegetation, MaxInstancesPerCellCaps) {
     EXPECT_LE(all.size(), 10u);
 }
 
+TEST(Vegetation, MaxInstancesPerCellCapsAcrossSpecies) {
+    VegetationBuilder b("multi-cap");
+    b.WithMasterSeed(31).WithMaxInstancesPerCell(10);
+    for (int s = 0; s < 4; ++s) {
+        b.AddSpecies(static_cast<VisualStateId>(100 + s));
+        b.WithDensity(0.3f).WithSpacing(0.0f);  // each species alone would place hundreds
+    }
+    const VegetationDef def = b.Take();
+
+    FlatTerrainSampler terrain;
+    const std::vector<VegetationInstance> all = ScatterCell(def, terrain, 0, 0, kCellSize);
+    EXPECT_EQ(all.size(), 10u);  // EXACTLY the cap, never cap + (numSpecies - 1)
+}
+
 // ---- Validator (fail-closed) ----
 
 TEST(Vegetation, ValidatorAcceptsWellFormedDef) {

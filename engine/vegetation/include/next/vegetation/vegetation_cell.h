@@ -17,6 +17,11 @@ constexpr uint32_t kVegetationCellMagic = static_cast<uint32_t>('N') | (static_c
                                           (static_cast<uint32_t>('E') << 16u) | (static_cast<uint32_t>('G') << 24u);
 constexpr uint16_t kVegetationCellVersion = 1;
 
+// Hard ceiling on instances in one cell blob. UnpackCell rejects anything larger BEFORE sizing/allocating
+// — so a crafted header can't drive a pathological allocation (and it closes the 32-bit size-multiply
+// overflow path). 16M >> any realistic per-cell count (default cap is 65536).
+constexpr uint32_t kMaxVegetationCellInstances = 1u << 24;
+
 struct VegetationCellHeader {
     uint32_t magic = kVegetationCellMagic;
     uint16_t version = kVegetationCellVersion;

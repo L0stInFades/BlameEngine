@@ -88,3 +88,63 @@ TEST(VegetationStreamingSystem, AutoIngestsAndEvictsFromStreaming) {
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }
+
+TEST(VegetationStreamingSystem, ReingestsOnLayerReload) {
+    const std::filesystem::path dir = MakeTempDir();
+
+    StreamingManager mgr;
+    StreamingManagerConfig cfg;
+    cfg.memoryBudgetMB = 64;
+    cfg.loadRadius = 128.0f;
+    cfg.unloadRadius = 256.0f;
+    cfg.enablePrediction = false;
+    cfg.allowPlaceholderCellLoad = true;
+    cfg.cellDataDirectory = dir.wstring();
+    ASSERT_TRUE(mgr.Initialize(cfg));
+    mgr.Update(0.016f, Vec3(0, 0, 0), Vec3(0, 0, -1), Vec3(0, 0, 0));
+    const std::vector<CellCoord> loaded = mgr.GetLoadedCells();
+    ASSERT_FALSE(loaded.empty());
+    const CellCoord coord = loaded.front();
+
+    const std::filesystem::path resolvedDir(mgr.GetConfig().cellDataDirectory);
+    std::filesystem::create_directories(resolvedDir);
+    const std::string path =
+        (resolvedDir / ("cell_" + std::to_string(coord.x) + "_" + std::to_string(coord.z) + ".nlc")).string();
+    FlatTerrainSampler terrain;
+
+    // First: a dense forest, ingested by Sync.
+    const CookResult dense = CookVegetationCell(Forest(), terrain, coord.x, coord.z, 64.0f);
+    ASSERT_TRUE(dense.ok);
+    ASSERT_TRUE(WriteCellFile(path, dense.bytes));
+    mgr.LoadCellLayer(coord, CellLayer::Vegetation);
+
+    VegetationStreamingSystem sys;
+    sys.Sync(mgr);
+    const size_t count1 = sys.Store().LiveInstanceCount();
+    ASSERT_GT(count1, 0u);
+    EXPECT_EQ(count1, dense.instanceCount);
+
+    // Reload the SAME cell's layer with a sparser def (different count -> different byte size).
+    VegetationBuilder sparseBuilder("sparse-forest");
+    sparseBuilder.WithMasterSeed(11).WithMaxInstancesPerCell(100000);
+    sparseBuilder.AddSpecies(101);
+    sparseBuilder.WithDensity(0.005f).WithSpacing(6.0f).WithLogicalRadius(1.5f);
+    const CookResult sparse = CookVegetationCell(sparseBuilder.Take(), terrain, coord.x, coord.z, 64.0f);
+    ASSERT_TRUE(sparse.ok);
+    ASSERT_NE(sparse.instanceCount, dense.instanceCount);
+
+    mgr.UnloadCellLayer(coord, CellLayer::Vegetation);
+    ASSERT_TRUE(WriteCellFile(path, sparse.bytes));
+    mgr.LoadCellLayer(coord, CellLayer::Vegetation);
+
+    // Without the (ptr,size) content token, Sync would see the coord already present and keep stale data.
+    const size_t reingested = sys.Sync(mgr);
+    EXPECT_GE(reingested, 1u);
+    const size_t count2 = sys.Store().LiveInstanceCount();
+    EXPECT_EQ(count2, sparse.instanceCount);
+    EXPECT_NE(count2, count1);
+
+    mgr.Shutdown();
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}

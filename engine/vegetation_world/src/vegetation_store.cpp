@@ -11,8 +11,19 @@ VegetationStore::VegetationStore(float broadphaseCellSize)
     : broadphaseCellSize_(broadphaseCellSize > 0.0f ? broadphaseCellSize : 8.0f) {}
 
 VegetationStore::GridKey VegetationStore::BucketOf(float x, float z) const {
-    return GridKey{static_cast<int32_t>(std::floor(x / broadphaseCellSize_)),
-                   static_cast<int32_t>(std::floor(z / broadphaseCellSize_))};
+    // Clamp before the float->int32 cast: an out-of-int32-range quotient (extreme coord/radius) would be
+    // undefined behavior and could corrupt the bucket range.
+    auto bucket = [](float v) -> int32_t {
+        const float f = std::floor(v);
+        if (f < -2.0e9f) {
+            return -2000000000;
+        }
+        if (f > 2.0e9f) {
+            return 2000000000;
+        }
+        return static_cast<int32_t>(f);
+    };
+    return GridKey{bucket(x / broadphaseCellSize_), bucket(z / broadphaseCellSize_)};
 }
 
 bool VegetationStore::LoadCell(int32_t cellX, int32_t cellZ, const uint8_t* vegBlob, size_t size) {

@@ -37,7 +37,11 @@ std::vector<VegetationInstance> ScatterCell(const VegetationDef& def, const ITer
     const float originZ = static_cast<float>(cellZ) * cellSize;
     const Next::Vec3 up(0.0f, 1.0f, 0.0f);
 
+    bool capped = false;  // cell-level: the per-cell cap stops ALL species, not just the current one
     for (const VegetationSpecies& sp : def.species) {
+        if (capped) {
+            break;
+        }
         if (!(sp.densityPerSqMeter > 0.0f)) {  // also rejects NaN
             continue;
         }
@@ -66,7 +70,6 @@ std::vector<VegetationInstance> ScatterCell(const VegetationDef& def, const ITer
         const float spacingSq = sp.minSpacing * sp.minSpacing;
         std::unordered_map<SpacingKey, std::vector<uint32_t>, SpacingKeyHash> spacingGrid;
 
-        bool capped = false;
         for (int32_t i = 0; i < gridDim && !capped; ++i) {
             for (int32_t j = 0; j < gridDim; ++j) {
                 // One deterministic stream per (cell, species, node) — order-independent.
@@ -83,7 +86,10 @@ std::vector<VegetationInstance> ScatterCell(const VegetationDef& def, const ITer
                     continue;
                 }
 
-                const Next::Vec3 n = s.normal.Normalize();
+                Next::Vec3 n = s.normal.Normalize();
+                if (n.Dot(n) < 0.25f) {
+                    n = up;  // degenerate terrain normal -> treat as flat ground (avoids a (0,0,0) normal)
+                }
                 const float slopeCos = n.Dot(up);
                 if (slopeCos < cosSteepest || slopeCos > cosFlattest) {
                     continue;  // too steep, or (when minSlope>0) too flat
@@ -135,15 +141,14 @@ std::vector<VegetationInstance> ScatterCell(const VegetationDef& def, const ITer
                 inst.species = sp.id;
                 inst.flags = sp.flags;
 
+                if (out.size() >= def.maxInstancesPerCell) {
+                    capped = true;
+                    break;  // hard per-cell cap reached -> stop BEFORE exceeding it
+                }
                 const uint32_t newIndex = static_cast<uint32_t>(out.size());
                 out.push_back(inst);
                 if (useSpacing) {
                     spacingGrid[SpacingKey{gx, gz}].push_back(newIndex);
-                }
-
-                if (out.size() >= def.maxInstancesPerCell) {
-                    capped = true;
-                    break;
                 }
             }
         }

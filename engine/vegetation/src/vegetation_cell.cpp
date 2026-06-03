@@ -32,6 +32,9 @@ bool UnpackCell(const uint8_t* data, size_t size, VegetationCellData& out) {
         header.headerSize != sizeof(VegetationCellHeader)) {
         return false;
     }
+    if (header.instanceCount > kMaxVegetationCellInstances) {
+        return false;  // absurd count -> reject before sizing/allocating (also guards 32-bit overflow)
+    }
 
     const size_t expected =
         sizeof(VegetationCellHeader) + static_cast<size_t>(header.instanceCount) * sizeof(VegetationInstance);

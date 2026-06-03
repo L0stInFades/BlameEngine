@@ -27,7 +27,16 @@ public:
           originX_(originX),
           originZ_(originZ),
           heights_(std::move(heights)),
-          mask_(std::move(mask)) {}
+          mask_(std::move(mask)) {
+        // Tolerate a short / mismatched array by padding to width*height instead of reading OOB.
+        const size_t need = static_cast<size_t>(width_) * static_cast<size_t>(height_);
+        if (heights_.size() < need) {
+            heights_.resize(need, 0.0f);
+        }
+        if (!mask_.empty() && mask_.size() < need) {
+            mask_.resize(need, 0xFFFFFFFFu);
+        }
+    }
 
     TerrainSample SampleAt(float worldX, float worldZ) const override {
         TerrainSample s;
