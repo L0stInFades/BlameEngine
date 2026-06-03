@@ -69,6 +69,20 @@ std::vector<uint8_t> PackLayeredCell(const std::vector<LayeredCellChunkInput>& c
 // unsupported codec, an over-cap decompressed size, or a decode/size mismatch.
 bool ParseLayeredCell(const uint8_t* data, size_t size, std::vector<LayeredCellChunk>& outChunks);
 
+// Validate ONLY the header + directory of a layered cell (no payload touched), returning the directory
+// entries. `data`/`size` is a buffer holding at least the header+directory; `fileSize` is the TOTAL file
+// size that chunk offsets/sizes are validated against — so a partial (header+directory only) read can
+// still validate offsets that point into the full file. FAIL-CLOSED. The building block that lets the
+// async streaming path read just one chunk instead of the whole file (ADR-0014 async migration).
+bool ParseLayeredCellDirectory(const uint8_t* data, size_t size, uint64_t fileSize,
+                               std::vector<LayeredCellChunkEntry>& outEntries);
+
+// Decode ONE chunk from a STANDALONE buffer of exactly its compressed bytes (NOT the whole-file buffer —
+// do not pass `wholeFile + offset` semantics here, pass the chunk bytes). `chunkSize` must equal
+// entry.compressedSize. FAIL-CLOSED on codec/size mismatch. Used by ParseLayeredCell and the async path.
+bool DecodeLayeredCellChunk(const LayeredCellChunkEntry& entry, const uint8_t* chunkData, size_t chunkSize,
+                            std::vector<uint8_t>& out);
+
 // Extract one layer's decompressed bytes (first match). Returns false if the layer is absent or the
 // blob is malformed. Convenience over ParseLayeredCell for the streaming loader.
 bool ExtractLayer(const uint8_t* data, size_t size, CellLayer layer, std::vector<uint8_t>& outBytes);

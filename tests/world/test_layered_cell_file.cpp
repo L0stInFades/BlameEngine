@@ -142,3 +142,73 @@ TEST(LayeredCell, CompressedRoundTripWhenAvailable) {
         EXPECT_EQ(chunks[0].data, Compressible(4096));  // decompresses back to the original
     }
 }
+
+// ---- Stage 0 building blocks for async per-chunk streaming (ParseLayeredCellDirectory + DecodeChunk) ----
+
+TEST(LayeredCell, DirectoryAndChunkDecodeMatchWholeFileParse) {
+    std::vector<LayeredCellChunkInput> inputs;
+    inputs.push_back(MakeInput(CellLayer::StaticMesh, CellFileCompression::None, Bytes({1, 2, 3, 4, 5})));
+    inputs.push_back(MakeInput(CellLayer::Vegetation, CellFileCompression::None, Bytes({9, 8, 7, 6})));
+    const std::vector<uint8_t> blob = PackLayeredCell(inputs);
+
+    std::vector<LayeredCellChunkEntry> entries;
+    ASSERT_TRUE(ParseLayeredCellDirectory(blob.data(), blob.size(), blob.size(), entries));
+    ASSERT_EQ(entries.size(), 2u);
+    for (const LayeredCellChunkEntry& e : entries) {
+        std::vector<uint8_t> decoded;
+        ASSERT_TRUE(DecodeLayeredCellChunk(e, blob.data() + e.offset, static_cast<size_t>(e.compressedSize), decoded));
+        std::vector<uint8_t> viaExtract;
+        ASSERT_TRUE(ExtractLayer(blob.data(), blob.size(), static_cast<CellLayer>(e.layer), viaExtract));
+        EXPECT_EQ(decoded, viaExtract);  // building blocks reproduce the whole-file path
+    }
+}
+
+TEST(LayeredCell, ChunkOnlyBufferDecodes) {
+    // Simulate an async partial read: read header+directory, then read JUST the chunk into a fresh buffer.
+    std::vector<LayeredCellChunkInput> inputs;
+    inputs.push_back(MakeInput(CellLayer::Vegetation, CellFileCompression::None, Bytes({4, 4, 4, 4, 4, 4})));
+    const std::vector<uint8_t> blob = PackLayeredCell(inputs);
+
+    std::vector<LayeredCellChunkEntry> entries;
+    ASSERT_TRUE(ParseLayeredCellDirectory(blob.data(), blob.size(), blob.size(), entries));
+    ASSERT_EQ(entries.size(), 1u);
+    const LayeredCellChunkEntry& e = entries[0];
+
+    const std::vector<uint8_t> chunkOnly(blob.begin() + static_cast<long>(e.offset),
+                                         blob.begin() + static_cast<long>(e.offset + e.compressedSize));
+    std::vector<uint8_t> decoded;
+    ASSERT_TRUE(DecodeLayeredCellChunk(e, chunkOnly.data(), chunkOnly.size(), decoded));
+    EXPECT_EQ(decoded, Bytes({4, 4, 4, 4, 4, 4}));
+    EXPECT_FALSE(DecodeLayeredCellChunk(e, chunkOnly.data(), chunkOnly.size() - 1, decoded));  // wrong size
+}
+
+TEST(LayeredCell, ChunkOnlyCompressedDecodes) {
+    for (CellFileCompression codec : {CellFileCompression::Zstd, CellFileCompression::LZ4}) {
+        std::vector<LayeredCellChunkInput> inputs;
+        inputs.push_back(MakeInput(CellLayer::Vegetation, codec, Compressible(4096)));
+        const std::vector<uint8_t> blob = PackLayeredCell(inputs);
+
+        std::vector<LayeredCellChunkEntry> entries;
+        ASSERT_TRUE(ParseLayeredCellDirectory(blob.data(), blob.size(), blob.size(), entries));
+        ASSERT_EQ(entries.size(), 1u);
+        const LayeredCellChunkEntry& e = entries[0];
+        const std::vector<uint8_t> chunkOnly(blob.begin() + static_cast<long>(e.offset),
+                                             blob.begin() + static_cast<long>(e.offset + e.compressedSize));
+        std::vector<uint8_t> decoded;
+        ASSERT_TRUE(DecodeLayeredCellChunk(e, chunkOnly.data(), chunkOnly.size(), decoded));
+        EXPECT_EQ(decoded, Compressible(4096));  // raw if codec unavailable, decompressed if available
+    }
+}
+
+TEST(LayeredCell, DirectoryParseRejectsCorruption) {
+    std::vector<LayeredCellChunkInput> inputs;
+    inputs.push_back(MakeInput(CellLayer::Vegetation, CellFileCompression::None, Bytes({1, 2, 3})));
+    const std::vector<uint8_t> blob = PackLayeredCell(inputs);
+
+    std::vector<LayeredCellChunkEntry> entries;
+    EXPECT_FALSE(ParseLayeredCellDirectory(blob.data(), 4, blob.size(), entries));  // too small for a header
+    std::vector<uint8_t> badMagic = blob;
+    badMagic[0] ^= 0xFFu;
+    EXPECT_FALSE(ParseLayeredCellDirectory(badMagic.data(), badMagic.size(), badMagic.size(), entries));
+    EXPECT_FALSE(ParseLayeredCellDirectory(blob.data(), blob.size(), 16, entries));  // fileSize too small for dir
+}

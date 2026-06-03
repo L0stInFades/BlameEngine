@@ -85,8 +85,9 @@ std::vector<uint8_t> PackLayeredCell(const std::vector<LayeredCellChunkInput>& c
     return blob;
 }
 
-bool ParseLayeredCell(const uint8_t* data, size_t size, std::vector<LayeredCellChunk>& outChunks) {
-    outChunks.clear();
+bool ParseLayeredCellDirectory(const uint8_t* data, size_t size, uint64_t fileSize,
+                               std::vector<LayeredCellChunkEntry>& outEntries) {
+    outEntries.clear();
     if (data == nullptr || size < sizeof(LayeredCellHeader)) {
         return false;
     }
@@ -100,11 +101,12 @@ bool ParseLayeredCell(const uint8_t* data, size_t size, std::vector<LayeredCellC
 
     const uint64_t directoryBytes = static_cast<uint64_t>(sizeof(LayeredCellHeader)) +
                                     static_cast<uint64_t>(header.layerCount) * sizeof(LayeredCellChunkEntry);
-    if (directoryBytes > size) {
+    // The directory must fit in the provided buffer; payload offsets are validated against the full file.
+    if (directoryBytes > size || directoryBytes > fileSize) {
         return false;
     }
 
-    outChunks.reserve(header.layerCount);
+    outEntries.reserve(header.layerCount);
     for (uint32_t i = 0; i < header.layerCount; ++i) {
         LayeredCellChunkEntry e;
         std::memcpy(&e, data + sizeof(LayeredCellHeader) + static_cast<size_t>(i) * sizeof(LayeredCellChunkEntry),
@@ -116,35 +118,67 @@ bool ParseLayeredCell(const uint8_t* data, size_t size, std::vector<LayeredCellC
         if (e.decompressedSize > kLayeredCellMaxChunkBytes) {
             return false;
         }
-        if (e.offset < directoryBytes || e.offset > size) {
+        if (e.offset < directoryBytes || e.offset > fileSize) {
             return false;
         }
-        if (e.compressedSize > static_cast<uint64_t>(size) - e.offset) {
+        if (e.compressedSize > fileSize - e.offset) {
             return false;
         }
+        if (static_cast<CellFileCompression>(e.codec) == CellFileCompression::None &&
+            e.compressedSize != e.decompressedSize) {
+            return false;
+        }
+        outEntries.push_back(e);
+    }
+    return true;
+}
 
-        const CellFileCompression codec = static_cast<CellFileCompression>(e.codec);
+bool DecodeLayeredCellChunk(const LayeredCellChunkEntry& entry, const uint8_t* chunkData, size_t chunkSize,
+                            std::vector<uint8_t>& out) {
+    out.clear();
+    if (chunkData == nullptr || chunkSize != entry.compressedSize) {
+        return false;
+    }
+    if (entry.decompressedSize > kLayeredCellMaxChunkBytes) {
+        return false;
+    }
+
+    const CellFileCompression codec = static_cast<CellFileCompression>(entry.codec);
+    if (codec == CellFileCompression::None) {
+        if (entry.compressedSize != entry.decompressedSize) {
+            return false;
+        }
+        out.assign(chunkData, chunkData + chunkSize);
+        return true;
+    }
+
+    const Compression::Algorithm algo = ToAlgorithm(codec);
+    if (algo == Compression::Algorithm::None || !Compression::IsAvailable(algo)) {
+        return false;
+    }
+    out.resize(static_cast<size_t>(entry.decompressedSize));
+    const Compression::Result r =
+        Compression::Decompress(algo, chunkData, entry.compressedSize, out.data(), entry.decompressedSize);
+    if (!r.Succeeded() || r.bytesWritten != entry.decompressedSize) {
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
+bool ParseLayeredCell(const uint8_t* data, size_t size, std::vector<LayeredCellChunk>& outChunks) {
+    outChunks.clear();
+    std::vector<LayeredCellChunkEntry> entries;
+    if (!ParseLayeredCellDirectory(data, size, size, entries)) {
+        return false;
+    }
+    outChunks.reserve(entries.size());
+    for (const LayeredCellChunkEntry& e : entries) {
         LayeredCellChunk chunk;
         chunk.layer = static_cast<CellLayer>(e.layer);
-        chunk.codec = codec;
-
-        const uint8_t* src = data + e.offset;
-        if (codec == CellFileCompression::None) {
-            if (e.compressedSize != e.decompressedSize) {
-                return false;
-            }
-            chunk.data.assign(src, src + e.compressedSize);
-        } else {
-            const Compression::Algorithm algo = ToAlgorithm(codec);
-            if (!Compression::IsAvailable(algo)) {
-                return false;
-            }
-            chunk.data.resize(static_cast<size_t>(e.decompressedSize));
-            const Compression::Result r =
-                Compression::Decompress(algo, src, e.compressedSize, chunk.data.data(), e.decompressedSize);
-            if (!r.Succeeded() || r.bytesWritten != e.decompressedSize) {
-                return false;
-            }
+        chunk.codec = static_cast<CellFileCompression>(e.codec);
+        if (!DecodeLayeredCellChunk(e, data + e.offset, static_cast<size_t>(e.compressedSize), chunk.data)) {
+            return false;
         }
         outChunks.push_back(std::move(chunk));
     }
