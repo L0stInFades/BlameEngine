@@ -1,0 +1,103 @@
+---
+import { Icon } from 'astro-icon/components'
+
+const grades = [
+  {
+    k: 'PRODUCTION',
+    cls: 'grade__k--prod',
+    glowClass: '',
+    icon: 'lucide:check-circle-2',
+    items: [
+      '工业级构建流水线与自动化安全性审计，确保每一次提交皆合规',
+      '基于 Job System 的无锁并行调度器，压榨多核处理器极限性能',
+      '高速缓存友好的 Archetype ECS 实体组件系统，确保万物并行的确定性',
+    ],
+  },
+  {
+    k: 'USABLE',
+    cls: 'grade__k--use',
+    glowClass: '',
+    icon: 'lucide:play-circle',
+    items: [
+      '<b>Game API</b> · 基于能力域的安全接入面与写即意图（Intent-based）事务通道',
+      '<b>安全沙箱 RefVm</b> · 确定性燃料 VM，零逃逸原语，对抗性逃逸/越界/燃料测试守住',
+      '<b>关卡系统</b> · fail-closed 总校验门 + 事务化确定性加载（校验通过才建，失败不碰世界）',
+      '<b>物理引擎</b> · 极轻量 Headless 物理演算，保证多端绝对一致性',
+      '<b>资产运行时与远程控制台</b> · 句柄/引用计数 + 资源打包（Pak）极速读取通道',
+    ],
+  },
+  {
+    k: 'PROTOTYPE',
+    cls: 'grade__k--proto',
+    glowClass: 'glow-card--amber',
+    icon: 'lucide:settings',
+    items: [
+      '<b>原生脚本编译（WASM 前端）</b> · C++/Rust → wasm32 端到端跑通，但默认关闭、尚未纳入测试门，内存/燃料红线待硬化',
+      '<b>模拟/视图同步（sim↔UE5 边界）</b> · 无锁三重缓冲已落地；跨进程 transport 与时钟分歧下的镜像一致性待补',
+      '<b>序列化 / 存档</b> · 二进制/JSON 往返可用；World 存档序列化器与 schema 迁移待补',
+      '基于智能体原生反馈的动态行为树与多线程异步任务规划中枢',
+    ],
+  },
+  {
+    k: 'ABSENT · P1',
+    cls: 'grade__k--abs',
+    glowClass: 'glow-card--red',
+    icon: 'lucide:alert-octagon',
+    items: [
+      '网络状态同步 · 基于 delta 压缩的高频物理同步与去中心化拓扑网络',
+      '智能体总线 · LLM 原生感知世界状态接口，实现高维度自然语言演进',
+      '视觉呈现端 · 深度绑定虚幻引擎 5 Nanite 与 Lumen 的次世代三维渲染框架',
+    ],
+  },
+]
+---
+
+<section class="sec sec--road" id="road">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§08</span>
+    <h2 class="sec__title">生命周期：可预测的演进序列</h2>
+    <span class="sec__meta">STATE READYNESS & ROADMAP EVOLUTION</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    理性与秩序是进化的灯塔。我们为引擎的每一个子模块制定了严苛的就绪状态评级（Production / Usable / Prototype / Absent），为开发者描绘一条清晰透明、没有妥协的演进路径。这是我们对技术的坦诚，也是我们对品质的承诺。
+  </p>
+
+  <!-- Roadmap Grade Cards -->
+  <div class="gradegrid reveal">
+    {
+      grades.map((g) => (
+        <div class:list={['grade', 'glow-card', g.glowClass]}>
+          <div class="grade__title-row">
+            <span class:list={['grade__k', g.cls]}>{g.k}</span>
+            <Icon name={g.icon} class:list={['grade__icon', g.cls]} width={16} height={16} />
+          </div>
+          <ul>
+            {g.items.map((item) => (
+              <li set:html={item} />
+            ))}
+          </ul>
+        </div>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .grade__title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 18px;
+  }
+  .grade__k {
+    margin-bottom: 0 !important;
+  }
+  .grade__icon {
+    filter: drop-shadow(0 0 4px currentColor);
+  }
+  .grade__icon.grade__k--prod { color: var(--cyan); }
+  .grade__icon.grade__k--use { color: var(--cyan-deep); }
+  .grade__icon.grade__k--proto { color: var(--amber); }
+  .grade__icon.grade__k--abs { color: var(--red); }
+</style>

@@ -1,0 +1,130 @@
+---
+import { Icon } from 'astro-icon/components'
+---
+
+<section class="sec sec--contract" id="contract">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§02</span>
+    <h2 class="sec__title">以意图立契，世界终将如您所愿</h2>
+    <span class="sec__meta">INTENT AS LAW · DETERMINISTIC TO THE CORE</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    在高度并行的数字生态中，确定性是高精度仿真的基石。Blame Engine 在虚拟机和权威系统之间降维抽象出冻结的契约接口，将“防篡改”与“绝对确定”深深镌刻在每一条数据通道中。
+  </p>
+
+  <!-- Normalised 2x2 grid layout -->
+  <div class="contract-cards">
+    <!-- Card 1: ABI -->
+    <article class="ccard glow-card reveal">
+      <header class="ccard__head">
+        <div class="ccard__head-row">
+          <span class="ccard__id">ABI</span>
+          <Icon name="lucide:braces" class="ccard__icon" width={16} height={16} />
+        </div>
+        <h3>① 稳定扁平 C-ABI（冷冻面）</h3>
+        <span class="ccard__path">Game API 基础定义接口</span>
+      </header>
+      <p class="ccard__body">
+        舍弃复杂的 runtime 动态调用，采用极致精炼的扁平数据交换模型。一切指令调用均基于严格版本控制与不可变的符号寻址，这是沙箱隔离层唯一认可的通讯标准。
+      </p>
+      <div class="ccard__codesnippet">
+        <code>enum class CallId : uint32_t &#123;</code><br />
+        <code>&nbsp;&nbsp;GetTick = 1, GetTimeSeconds, Self, IsValid,</code><br />
+        <code>&nbsp;&nbsp;GetPosition, QueryByTag, SenseRadius,</code><br />
+        <code>&nbsp;&nbsp;SenseNearest, MoveTo, Stop, SetActionFlag,</code><br />
+        <code>&nbsp;&nbsp;SendSignal, GetObjective, ReportProgress, Log,</code><br />
+        <code>&nbsp;&nbsp;Raycast, Count_  <span class="t-d">// sentinel</span></code><br />
+        <code>&#125;;</code>
+      </div>
+    </article>
+
+    <!-- Card 2: CAP -->
+    <article class="ccard glow-card reveal">
+      <header class="ccard__head">
+        <div class="ccard__head-row">
+          <span class="ccard__id">CAP</span>
+          <Icon name="lucide:shield-alert" class="ccard__icon" width={16} height={16} />
+        </div>
+        <h3>② 能力域控（最小特权）</h3>
+        <span class="ccard__path">能力域控鉴权矩阵</span>
+      </header>
+      <p class="ccard__body">
+        在编译期静态铸造的权限控制矩阵，具备零运行时开销。不同消费者遵循严密的最小特权规范：外部代码仅能观察，AI 大脑仅受权写入意图，唯有内核持有特权。
+      </p>
+      <ul class="caplist">
+        <li><i class="b b--ok"></i><b>Observe</b> · 读世界</li>
+        <li><i class="b b--ok"></i><b>Sense</b> · 近邻/半径/射线</li>
+        <li><i class="b b--ok"></i><b>Actuate</b> · 对受控实体下意图</li>
+        <li><i class="b b--ok"></i><b>Comms</b> · 有界信道</li>
+        <li><i class="b b--ok"></i><b>Tasks</b> · 读任务/推进目标</li>
+        <li><i class="b b--ok"></i><b>Time</b> · tick + 固定步秒数</li>
+        <li><i class="b b--ok"></i><b>Log</b> · 限流诊断</li>
+        <li><i class="b b--wip"></i><b>SpawnEntities</b> · 特权，默认不授予</li>
+      </ul>
+    </article>
+
+    <!-- Card 3: INTENT -->
+    <article class="ccard glow-card reveal">
+      <header class="ccard__head">
+        <div class="ccard__head-row">
+          <span class="ccard__id">INTENT</span>
+          <Icon name="lucide:sparkles" class="ccard__icon" width={16} height={16} />
+        </div>
+        <h3>③ 写即意图（Tick 决算控制）</h3>
+        <span class="ccard__path">确定性意图决算中心</span>
+      </header>
+      <p class="ccard__body">
+        外部代码永远无法直接篡改权威世界的状态。所有的操作请求都将作为只读意图（Intent）送入缓冲通道，由 IntentResolver 在 Tick 边界按严格确定的次序进行决算。
+      </p>
+      <div class="ccard__flow">
+        <span>guest</span><span class="arr">→</span><span>AbiDispatch</span><span class="arr">→</span><span>GameApi</span><span class="arr">→</span><span>IntentQueue</span><span class="arr">→</span><span>tick 边界</span><span class="arr">→</span><span>ECS</span>
+      </div>
+    </article>
+
+    <!-- Card 4: DETERMINISM -->
+    <article class="ccard glow-card reveal">
+      <header class="ccard__head">
+        <div class="ccard__head-row">
+          <span class="ccard__id">DETERM</span>
+          <Icon name="lucide:scale" class="ccard__icon" width={16} height={16} />
+        </div>
+        <h3>④ 确定性红线</h3>
+        <span class="ccard__path">架构设计决议录 §4</span>
+      </header>
+      <p class="ccard__body">
+        沙箱内时间完全对齐 tick，屏蔽一切物理墙钟；实体遍历遵循实体 ID 升序排序；浮点运算在 Wasm 解释端强制 IEEE-754 规范，彻底消除非确定性超越函数导致的仿真偏差。
+      </p>
+      <div class="ccard__subgrid">
+        <div class="ccard__sub">
+          <span class="ccard__sub-k">时间</span>
+          <span class="ccard__sub-v">tick + 固定步长 · 无墙钟</span>
+        </div>
+        <div class="ccard__sub">
+          <span class="ccard__sub-k">迭代</span>
+          <span class="ccard__sub-v">按 EntityId 升序</span>
+        </div>
+        <div class="ccard__sub">
+          <span class="ccard__sub-k">随机</span>
+          <span class="ccard__sub-v">sim 拥有 · 带种子</span>
+        </div>
+        <div class="ccard__sub">
+          <span class="ccard__sub-k">浮点</span>
+          <span class="ccard__sub-v">IEEE-754 + − × ÷</span>
+        </div>
+      </div>
+    </article>
+  </div>
+</section>
+
+<style>
+  .ccard__head-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .ccard__icon {
+    color: var(--cyan);
+    filter: drop-shadow(0 0 4px var(--cyan-glow));
+  }
+</style>

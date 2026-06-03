@@ -1,0 +1,28 @@
+---
+const navItems = [
+  { id: 'bet', name: '00 愿景' },
+  { id: 'loop', name: '01 管线' },
+  { id: 'contract', name: '02 契约' },
+  { id: 'sandbox', name: '03 安全' },
+  { id: 'world', name: '04 空间' },
+  { id: 'boundary', name: '05 互联' },
+  { id: 'arch', name: '06 架构' },
+  { id: 'run', name: '07 宿主' },
+  { id: 'road', name: '08 路线' },
+]
+---
+
+<header class="nav" id="nav">
+  <a class="nav__mark" href="#top">
+    <span class="nav__glyph">&gt;_</span>
+    <span class="nav__word">BLAME<span class="nav__word-dim">&nbsp;&nbsp;ENGINE</span></span>
+  </a>
+  <nav class="nav__links">
+    {
+      navItems.map((item) => (
+        <a href={`#${item.id}`} data-sec>{item.name}</a>
+      ))
+    }
+  </nav>
+  <span class="nav__tag">CORE BUILD 0.9.1A · HEADLESS-AUTHORITATIVE</span>
+</header>

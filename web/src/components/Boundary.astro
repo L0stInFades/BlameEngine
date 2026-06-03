@@ -1,0 +1,109 @@
+---
+import { Icon } from 'astro-icon/components'
+
+const simSteps = [
+  '提取差异脏集并无锁写入后台缓冲',
+  '异步派发高保真视觉表现事件',
+  '原子级消费来自视图层的指令池',
+]
+
+const viewSteps = [
+  '无锁化拉取最新权威状态快照',
+  '执行严格差异化的实体生命周期',
+  '运用时序重构实现高平滑视角插值',
+  '消费视觉特效并推入用户层意图',
+]
+
+const arrows = [
+  { k: '状态快照', v: '无锁三重缓冲 · wait-free', mono: 'atom exchange' },
+  { k: '表现事件', v: 'SPSC append-only 队列', mono: 'VFX / SFX' },
+  { k: '输入/命令', v: 'SPSC append-only 队列', mono: 'tick 边界消费' },
+]
+
+const roadmapLanes = [
+  { k: 'Phase 1 · 进程内', v: '模拟核心作为原生库链接至 UE5 进程 · 缓冲环部署在同进程内 · 实现零拷贝', s: 'v0.9' },
+  { k: 'Phase 2 · 同机跨进程', v: '基于共享内存实现通信环 · 以一次内存拷贝的微小代价换取两端的物理故障隔离', s: 'next' },
+  { k: 'Phase 3 · 联网', v: '在网络层将状态字节转化为复制包 · 支持专属权威服务器与多客户端架构 · 量化同步机制已就位', s: 'future' },
+]
+---
+
+<section class="sec sec--boundary" id="boundary">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§05</span>
+    <h2 class="sec__title">双端分离，无锁并行的极致平衡</h2>
+    <span class="sec__meta">LOCK-FREE SYNCHRONIZATION · HARMONIZED SPLIT</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    为大世界网络体系与多端渲染设计的敏捷同步架构。我们将权威模拟核心与视觉渲染通道彻底剥离，以无锁三重缓冲（Triple Buffering）进行底层通信，令两端独立演进且自然协调。
+  </p>
+
+  <!-- Multi-lane Communication Diagram -->
+  <div class="lanes">
+    <!-- Sim Lane -->
+    <div class="lane lane--sim glow-card reveal">
+      <div class="lane__hdr-row">
+        <div class="lane__hdr">核心演算集群 (Deterministic Sim)</div>
+        <Icon name="lucide:arrow-right-left" width={16} height={16} style="color: var(--cyan)" />
+      </div>
+      <ol class="lane__steps">
+        {simSteps.map((step) => <li>{step}</li>)}
+      </ol>
+      <div class="lane__note">纯正的后端权威中枢 · 渲染解耦 · Headless 就绪</div>
+    </div>
+
+    <!-- Connecting Arrows -->
+    <div class="lane__arrows reveal" aria-hidden="true">
+      {
+        arrows.map((arr) => (
+          <div class="lane__arrow">
+            <span class="lane__arrow-k">{arr.k}</span>
+            <span class="lane__arrow-v">{arr.v}</span>
+            <span class="lane__arrow-mono">{arr.mono}</span>
+          </div>
+        ))
+      }
+    </div>
+
+    <!-- View Lane -->
+    <div class="lane lane--view glow-card reveal">
+      <div class="lane__hdr-row">
+        <div class="lane__hdr">表现视图集群 (Unreal Engine 5)</div>
+        <Icon name="lucide:arrow-right-left" width={16} height={16} style="color: var(--cyan); transform: rotate(180deg);" />
+      </div>
+      <ol class="lane__steps">
+        {viewSteps.map((step) => <li>{step}</li>)}
+      </ol>
+      <div class="lane__note">依托 <code>MirrorSubsystem</code> 代理 · 唤醒 Niagara 极致效能</div>
+    </div>
+  </div>
+
+  <!-- Roadmap Lanes -->
+  <div class="roadmap-lanes reveal">
+    {
+      roadmapLanes.map((rl) => (
+        <div class="rlane glow-card">
+          <span class="rlane__k">{rl.k}</span>
+          <span class="rlane__v">{rl.v}</span>
+          <span class="rlane__s">{rl.s}</span>
+        </div>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .lane__hdr-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .lane__hdr {
+    border-bottom: none !important;
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+  }
+</style>
