@@ -1035,7 +1035,7 @@ void StreamingManager::LoadCellLayer(const CellCoord& coord, CellLayer layer, fl
     }
 
     // The cell must exist at the cell level first (same contract as before). If it doesn't yet, kick a
-    // cell load; callers drive Update() to create it, then call LoadCellLayer again.
+    // cell load; callers drive Update() to create it, then call LoadCellLayer again (gap #11).
     if (!worldPartition_->GetCell(coord)) {
         LoadCell(coord, priority);
     }
@@ -1044,40 +1044,73 @@ void StreamingManager::LoadCellLayer(const CellCoord& coord, CellLayer layer, fl
         return;
     }
 
-    // Already loaded with real data?
+    // Already loaded with real data? Idempotent no-op.
     auto existing = cell->layers.find(layer);
     if (existing != cell->layers.end() && existing->second.state == CellLoadState::Loaded &&
         existing->second.data != nullptr) {
         return;
     }
+    // Already loading (or an abandoned read still draining) for this {coord,layer}? Coalesce. A re-load issued
+    // while a prior load/unload of the SAME layer is still in flight is therefore dropped: pump Update() until
+    // PendingLayerLoadCount()==0 between an Unload and a reload of the same layer (gap #6).
+    const CellLayerKey key{coord, layer};
+    if (activeLayerLoadOperations_.count(key) != 0) {
+        return;
+    }
 
-    // Real IO (ADR-0014): read this layer's decompressed bytes from the layered cell file.
-    std::vector<uint8_t> layerBytes;
-    if (TryReadLayeredCellLayer(coord, layer, layerBytes)) {
-        void* mem = nullptr;
-        if (!layerBytes.empty()) {
-            mem = memoryPool_ ? memoryPool_->Allocate(layerBytes.size(), alignof(std::max_align_t)) : nullptr;
-            if (!mem) {
-                NEXT_LOG_ERROR("LoadCellLayer: failed to allocate %zu bytes for layer=%u cell(%d,%d)",
-                               layerBytes.size(), static_cast<uint32_t>(layer), coord.x, coord.z);
-                return;  // had real cooked data but couldn't allocate -> fail-closed, never fake a placeholder
-            }
-            std::memcpy(mem, layerBytes.data(), layerBytes.size());
-        }
-        if (mem != nullptr || layerBytes.empty()) {
-            CellData::LayerData ld;
-            ld.layer = layer;
-            ld.data = mem;
-            ld.size = layerBytes.size();
-            ld.state = CellLoadState::Loaded;
-            ld.generation = nextLayerGeneration_++;
-            cell->layers[layer] = ld;
-            cell->metadata.SetLayerPresent(layer);  // memory is counted via CellData::MemorySize() (sums layers)
-            return;
+    // Absence is decided SYNCHRONOUSLY (a stat) so the placeholder / fail-closed terminal states are exactly
+    // as before; only the real-data case goes async (ADR-0014).
+    const std::filesystem::path path = GetLayeredCellFilePath(coord);
+    std::error_code ec;
+    uint64_t fileSize = 0;
+    if (std::filesystem::exists(path, ec) && !ec) {
+        const auto sz = std::filesystem::file_size(path, ec);
+        if (!ec) {
+            fileSize = static_cast<uint64_t>(sz);
         }
     }
 
-    // No cooked data for this layer.
+    if (fileSize > 0) {
+        // Real cooked data exists -> kick a NON-BLOCKING async whole-file read. The commit happens on the main
+        // thread in FinishLayerLoad (the read callback runs inside asyncIO_->Update()). Any failure to even
+        // START the read is fail-closed -> never a placeholder when real data is on disk.
+        size_t budgetBytes = 0;
+        const bool budgetOk = ComputeStreamingMemoryBudgetBytes(config_, budgetBytes) &&
+                              fileSize <= static_cast<uint64_t>(budgetBytes) &&
+                              fileSize <= static_cast<uint64_t>(std::numeric_limits<size_t>::max());
+        ActiveLayerOp op;
+        if (budgetOk) {
+            try {
+                op.rawReadBuffer.resize(static_cast<size_t>(fileSize));
+            } catch (const std::exception&) {
+                op.rawReadBuffer.clear();
+            }
+        }
+        if (asyncIO_ && !op.rawReadBuffer.empty()) {
+            const uint32_t ioPriority =
+                priority >= 1.0f ? 0u : static_cast<uint32_t>((1.0f - std::max(0.0f, priority)) * 1000.0f);
+            const uint64_t requestId = asyncIO_->SubmitReadRequest(
+                path.wstring(), 0, fileSize, op.rawReadBuffer.data(), CompressionType::None,
+                [this, key](bool success, uint64_t /*bytes*/) { FinishLayerLoad(key, success); }, ioPriority);
+            if (requestId != 0) {
+                op.asyncRequestId = requestId;
+                // Publish a Loading entry: IsCellLayerLoaded()==false and Sync() skips it until commit.
+                CellData::LayerData ld;
+                ld.layer = layer;
+                ld.data = nullptr;
+                ld.size = 0;
+                ld.state = CellLoadState::Loading;
+                cell->layers[layer] = ld;
+                activeLayerLoadOperations_[key] = std::move(op);
+                return;
+            }
+        }
+        NEXT_LOG_ERROR("LoadCellLayer: failed to start async read for layer=%u cell(%d,%d); fail-closed",
+                       static_cast<uint32_t>(layer), coord.x, coord.z);
+        return;
+    }
+
+    // No cooked data for this layer (file absent or empty).
     if (!config_.allowPlaceholderCellLoad) {
         NEXT_LOG_WARNING("LoadCellLayer: no cooked data for layer=%u cell(%d,%d); fail-closed (no placeholder)",
                          static_cast<uint32_t>(layer), coord.x, coord.z);
@@ -1096,38 +1129,90 @@ void StreamingManager::LoadCellLayer(const CellCoord& coord, CellLayer layer, fl
     cell->isPlaceholderData = true;
 }
 
-bool StreamingManager::TryReadLayeredCellLayer(const CellCoord& coord, CellLayer layer,
-                                               std::vector<uint8_t>& out) const {
-    out.clear();
+std::filesystem::path StreamingManager::GetLayeredCellFilePath(const CellCoord& coord) const {
     const std::wstring ext = config_.layeredCellExtension.empty() ? L".nlc" : config_.layeredCellExtension;
-    const std::filesystem::path path = std::filesystem::path(config_.cellDataDirectory) /
-                                       (L"cell_" + std::to_wstring(coord.x) + L"_" + std::to_wstring(coord.z) + ext);
+    return std::filesystem::path(config_.cellDataDirectory) /
+           (L"cell_" + std::to_wstring(coord.x) + L"_" + std::to_wstring(coord.z) + ext);
+}
 
-    std::error_code ec;
-    if (!std::filesystem::exists(path, ec) || ec) {
-        return false;
+void StreamingManager::FinishLayerLoad(const CellLayerKey& key, bool success) {
+    auto it = activeLayerLoadOperations_.find(key);
+    if (it == activeLayerLoadOperations_.end()) {
+        return;  // already reclaimed (only this function and Shutdown erase layer ops)
+    }
+    // Move the op out and free the map slot first: the {coord,layer} key is available again immediately, and
+    // the read buffer is reclaimed when `op` leaves scope at the end of this function. The worker has already
+    // pushed its completion (that is how we got here), so freeing the buffer now cannot race a mid-read.
+    ActiveLayerOp op = std::move(it->second);
+    activeLayerLoadOperations_.erase(it);
+
+    CellData* cell = worldPartition_ ? worldPartition_->GetCell(key.coord) : nullptr;
+
+    // Discard the result on abandon (unload/eviction raced the read), missing cell, or a failed read. Pull the
+    // Loading entry we published so the layer reads as absent (fail-as-absence), never as a zombie Loaded layer.
+    auto pullLoading = [&]() {
+        if (!cell) {
+            return;
+        }
+        auto le = cell->layers.find(key.layer);
+        if (le != cell->layers.end() && le->second.state == CellLoadState::Loading) {
+            cell->layers.erase(le);  // Loading entry holds no pool memory yet
+        }
+    };
+    if (op.abandoned || cell == nullptr || !success) {
+        if (!success && !op.abandoned) {
+            stats_.failedLoads++;
+        }
+        pullLoading();
+        return;
+    }
+    auto le = cell->layers.find(key.layer);
+    if (le == cell->layers.end() || le->second.state != CellLoadState::Loading) {
+        return;  // superseded by an unload/reload between submit and completion; drop
     }
 
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        return false;
+    // Extract this layer's decompressed bytes from the fully-read file (main-thread decode).
+    std::vector<uint8_t> layerBytes;
+    if (!ExtractLayer(op.rawReadBuffer.data(), op.rawReadBuffer.size(), key.layer, layerBytes)) {
+        cell->layers.erase(le);  // file present but this layer absent/corrupt -> fail-as-absence
+        stats_.failedLoads++;
+        return;
     }
-    file.seekg(0, std::ios::end);
-    const std::streamoff fileSize = file.tellg();
-    if (fileSize <= 0) {
-        return false;
+
+    // Commit. An EMPTY layer is valid (commit {nullptr,0,Loaded}); a non-empty one needs a pool allocation.
+    void* mem = nullptr;
+    if (!layerBytes.empty()) {
+        mem = memoryPool_ ? memoryPool_->Allocate(layerBytes.size(), alignof(std::max_align_t)) : nullptr;
+        if (!mem) {
+            NEXT_LOG_ERROR("FinishLayerLoad: failed to allocate %zu bytes for layer=%u cell(%d,%d); fail-closed",
+                           layerBytes.size(), static_cast<uint32_t>(key.layer), key.coord.x, key.coord.z);
+            cell->layers.erase(le);  // had real data but the pool is full -> fail-closed, never a placeholder
+            stats_.failedLoads++;
+            return;
+        }
+        std::memcpy(mem, layerBytes.data(), layerBytes.size());
     }
-    file.seekg(0, std::ios::beg);
-    std::vector<uint8_t> blob(static_cast<size_t>(fileSize));
-    if (!file.read(reinterpret_cast<char*>(blob.data()), fileSize)) {
-        return false;
-    }
-    return ExtractLayer(blob.data(), blob.size(), layer, out);
+    CellData::LayerData ld;
+    ld.layer = key.layer;
+    ld.data = mem;
+    ld.size = layerBytes.size();
+    ld.state = CellLoadState::Loaded;
+    ld.generation = nextLayerGeneration_++;  // bumped every (re)load so a consumer detects an in-place reload
+    le->second = ld;
+    cell->metadata.SetLayerPresent(key.layer);  // counted via CellData::MemorySize() (sums layers)
 }
 
 void StreamingManager::UnloadCellLayer(const CellCoord& coord, CellLayer layer) {
     if (!initialized_) {
         return;
+    }
+
+    // Abandon any in-flight async read for this layer: the read still completes, but FinishLayerLoad will see
+    // abandoned=true (and/or the pulled Loading entry) and discard + reclaim it. We deliberately do NOT free
+    // its read buffer here -> a worker may be mid-read -> no use-after-free.
+    auto opIt = activeLayerLoadOperations_.find(CellLayerKey{coord, layer});
+    if (opIt != activeLayerLoadOperations_.end()) {
+        opIt->second.abandoned = true;
     }
 
     CellData* cell = worldPartition_->GetCell(coord);
@@ -1370,6 +1455,9 @@ void StreamingManager::Shutdown() {
     loadQueue_.clear();
     unloadQueue_.clear();
     activeLoadOperations_.clear();
+    // Safe here: asyncIO_->Shutdown() above joined the IO workers, so no worker is still reading into these
+    // layer op buffers (abandoned reads can no longer be in flight).
+    activeLayerLoadOperations_.clear();
     activeUnloadOperations_.clear();
     cellToPackageName_.clear();
     cellToBundle_.clear();
@@ -1899,6 +1987,14 @@ void StreamingManager::ProcessCellUnload(const CellUnloadRequest& request) {
             Next::JobSystem::Instance().Cancel(itLoad->second.job);
         }
         activeLoadOperations_.erase(itLoad);
+    }
+
+    // Abandon any in-flight async layer reads for this coord (whole-cell eviction). Same discipline as
+    // UnloadCellLayer: mark abandoned, let the read finish, reclaim in FinishLayerLoad (no mid-read free).
+    for (auto& entry : activeLayerLoadOperations_) {
+        if (entry.first.coord == request.coord) {
+            entry.second.abandoned = true;
+        }
     }
 
     worldPartition_->RequestCellUnload(request.coord);

@@ -71,5 +71,31 @@ NCL2 不同:`LayeredCellHeader`(16B)+ `LayeredCellChunkEntry[layerCount]`(各 32
 - **新 async 测试**:`LoadsVegetationLayerViaAsyncIO`(断言 `GetIOStatistics().HasReadBytes()` + `UnpackCell` 对齐 `ScatterCell`)、压缩 chunk(`IsAvailable` 守卫 + `HasDecompressedBytes()`)、缺 chunk fail-as-absence 且 **cell 仍在 `GetLoadedCells()`**、部分读只读 `entry.compressedSize`、upload 预算 defer 不丢、async 内存计账、unload/Shutdown-mid-load 无 UAF(ASan)。
 - **StaticMesh 回归门**:每阶段后重跑 `WorldStreamingTest`(`info.memorySize == payload.size`、磁盘加载、load-start/upload 预算),`asan` preset。
 
+## 6. 实现(已落地 2026-06-03)
+
+实际实现**没有走 §2 的 Option-A → 分步迁移**,而是直接落地**更干净的「独立路径 Option B」**。决定性事实:`async_io` 的回调在**主线程** `asyncIO_->Update()` 里执行(`async_io.cpp:686` 注释「callbacks are executed on main thread in Update()」),所以层 commit 可以**直接在读回调里**做——不需要第二个 completions 向量/锁,也**完全不碰** StaticMesh 的 `completions_`/`ProcessCellOpCompletions`。这一刀把最危险的几个 gap(#1/#3/#4/#5/#13,全是「共用 StaticMesh commit 路」带来的)**按构造消掉**。
+
+**落地形态**:
+- 新 `activeLayerLoadOperations_`(键 `{coord,layer}`)+ `ActiveLayerOp{asyncRequestId, rawReadBuffer, abandoned}`,与 StaticMesh 的 `activeLoadOperations_` **完全并行、零交叉**。
+- `LoadCellLayer(非 StaticMesh)` 改**非阻塞**:cell 不在 → kick `LoadCell` 返回(#11);文件缺失/空 → **同步** stat 决定 placeholder/fail-closed(语义与旧同步路一致 → 占位/fail-closed 测试零改动);有真数据 → `SubmitReadRequest` 整文件读 + 发布 `Loading` entry + 存 op,**立即返回**。
+- 读回调 `FinishLayerLoad`(主线程):re-find op → 搬出并先擦 map 槽 → `abandoned`/cell 没了/`!success` → 丢弃并撤掉 `Loading` entry(**fail-as-absence**);否则 `ExtractLayer`(主线程解码)→ 空层合法 commit `{nullptr,0,Loaded}`、非空 `Allocate`+memcpy(`Allocate` 失败 → fail-closed,**绝不**占位)→ `generation = nextLayerGeneration_++` → `SetLayerPresent`。
+- **取消 = abandon + 回调里回收**(不是 `CancelRequest`):`UnloadCellLayer`/`ProcessCellUnload` 只把在飞 op 标 `abandoned`、**不** free 读 buffer(worker 可能正在读)。读照常完成,回调发现 `abandoned` 即丢弃,buffer 随 op 离开作用域回收——buffer 只在 **worker 已完成后**(回调里)或 **Shutdown `join` 完 worker 后**才释放 → **无 mid-read use-after-free**(比 StaticMesh 的 best-effort `CancelRequest` 更强)。
+- `Shutdown`:`asyncIO_->Shutdown()`(join worker)在前,`activeLayerLoadOperations_.clear()` 在后(紧挨 `activeLoadOperations_.clear()`)。
+
+**15 个 gap 的落地处置**:
+- **#1 / #3 / #13**(Option-A block-drain 自相矛盾/挂死/误推进):**消解**——根本没有 block-drain,回调在正常 `Update()` 泵里跑,`asyncIO_->Update()` 每帧本就被调一次。
+- **#2**(eviction 饿死):**按设计消解**——层加载**不走** `ProcessLoadQueue`,直接 submit,不受全局 eviction gate;内存压力下在 commit 处 `Allocate` 失败 → fail-closed,**绝不驱逐别的 cell**。`PendingLayerLoadCount()` + 测试钉死。
+- **#4**(空 chunk 当 Error):**消解**——独立 commit,空层即 `{nullptr,0,Loaded}`,从不复用 StaticMesh 的 `:606` 空检查。
+- **#5**(unload-during-load 误 `ReleaseCellLayers`):**修**——回调只丢本层在飞 buffer + 撤 `Loading` entry,从不 `ReleaseCellLayers`。
+- **#6**(reload 测试无 `Update`):**修**——测试改 pump 模式;同层 unload→reload 之间 `PumpUntilLayersQuiescent`(协调两个同 coord 异步 op 的顺序)。
+- **#7**(`UnloadCellLayer`/`ProcessCellUnload` 取消不对称):**修**——两个入口都 abandon 在飞 op。
+- **#8 / #9**(主线程纪律 / `Sync` 线程安全):**构造保证 + 文档化**——回调天然在主线程;`LoadCellLayer`/`Update`/`Sync` 同线程契约写进头注释。
+- **#10**(reload token):**已修**(`generation`,commit f113f3e)。
+- **#11**(cell 须先在):**修**——`LoadCellLayer` 缺 cell 即 kick `LoadCell` 返回;测试先 `Update()`。
+- **#14**(`CellLayerKey` hash 丢熵):**修**——`hash_combine` 而非 `<<4`。
+- **#12**(部分 chunk 读)/ **#15**(per-chunk worker 解压 + 优先级):**未做,记为后续优化(非 bug)**——现读整文件 + 主线程 `ExtractLayer` 解码,与旧同步路**等价工作量**,只是挪离调用线程。真 per-layer 部分读 / worker 解压是性能优化,留作 Stage 3/4(见 [TECH_DEBT](../TECH_DEBT.md))。
+
+**测试**:pump 模式重写 6 处(`VegetationStreamingSystem` × 3、`VegetationStreaming` 真数据 × 2、`VegetationSlice`);新增 `LoadsVegetationLayerViaAsyncIO`(`GetIOStatistics().totalBytesRead` 增长证明走 async IO)、`UnloadDuringAsyncLoadIsSafe`、`ShutdownDuringAsyncLoadIsSafe`、`EvictionDuringAsyncLoadIsSafe`(后三者 ASan × 20 轮无 UAF)。结果:13 个 vegetation+world ctest 套件 **100% 绿**;ASan 74 测试绿;StaticMesh `WorldStreamingTest` 62 测试**逐字节未动、回归绿**。
+
 ## 5. 关键文件/符号(均已核实)
 `StreamingManager::{LoadCellLayer,TryReadLayeredCellLayer,ProcessCellLoad,ProcessCellOpCompletions,UnloadCellLayer,ProcessCellUnload}`、新 `GetLayeredCellFilePath`、`ActiveCellOp`/`CellOpCompletion`/`activeLoadOperations_`(`streaming_manager.{h,cpp}`);`AsyncIOSystem::{SubmitReadRequest,SubmitDecompressRequest,CancelRequest,ProcessCompletions,Update}`、`StreamingMemoryPool::{Allocate,Free}`(`async_io.{h,cpp}`);`ParseLayeredCell`/`ExtractLayer`、新 `ParseLayeredCellDirectory`/`DecodeLayeredCellChunk`、`LayeredCellHeader`/`LayeredCellChunkEntry`/`kLayeredCellMaxChunkBytes`(`layered_cell_file.{h,cpp}`);`CellData::{MemorySize,LayerData,IsLayerLoaded}`、`CellMetadata::SetLayerPresent`(`world_partition.h`);`VegetationStreamingSystem::Sync`(`vegetation_streaming_system.cpp`);codec 桥 `CellFileCompression`↔`CompressionType`。

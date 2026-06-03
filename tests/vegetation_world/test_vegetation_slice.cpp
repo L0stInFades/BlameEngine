@@ -15,6 +15,7 @@
 #include <chrono>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "next/streaming/streaming_manager.h"
@@ -49,6 +50,15 @@ VegetationDef Forest() {  // destructible + LOS-blocking, so the slice exercises
     b.AddSpecies(101);
     b.WithDensity(0.03f).WithSpacing(2.0f).WithLogicalRadius(1.5f).BlocksLineOfSight().Destructible();
     return b.Take();
+}
+
+// LoadCellLayer is async (ADR-0014): pump Update() (which drives the main-thread layer commit) until loaded.
+bool PumpUntilLayerLoaded(StreamingManager& mgr, const CellCoord& coord, CellLayer layer) {
+    for (int i = 0; i < 3000 && !mgr.IsCellLayerLoaded(coord, layer); ++i) {
+        mgr.Update(0.016f, Vec3(0, 0, 0), Vec3(0, 0, -1), Vec3(0, 0, 0));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return mgr.IsCellLayerLoaded(coord, layer);
 }
 
 }  // namespace
@@ -88,9 +98,9 @@ TEST(VegetationSlice, CookStreamStoreQueryDestroyMirror) {
         resolvedDir / ("cell_" + std::to_string(coord.x) + "_" + std::to_string(coord.z) + ".nlc");
     ASSERT_TRUE(WriteCellFile(cellFile.string(), cooked.bytes));
 
-    // ---- STAGE 2: streaming loads the Vegetation layer via real IO ----
+    // ---- STAGE 2: streaming loads the Vegetation layer via real async IO ----
     mgr.LoadCellLayer(coord, CellLayer::Vegetation);
-    ASSERT_TRUE(mgr.IsCellLayerLoaded(coord, CellLayer::Vegetation));
+    ASSERT_TRUE(PumpUntilLayerLoaded(mgr, coord, CellLayer::Vegetation));
     const CellData* cell = mgr.GetCell(coord);
     ASSERT_NE(cell, nullptr);
     const auto layerIt = cell->layers.find(CellLayer::Vegetation);

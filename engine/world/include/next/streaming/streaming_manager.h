@@ -15,6 +15,7 @@
 #include <functional>
 #include <string>
 #include <mutex>
+#include <filesystem>
 
 namespace Next {
 namespace Streaming {
@@ -251,6 +252,9 @@ public:
     void LoadCellLayer(const CellCoord& coord, CellLayer layer, float priority = 0.0f);
     void UnloadCellLayer(const CellCoord& coord, CellLayer layer);
     bool IsCellLayerLoaded(const CellCoord& coord, CellLayer layer) const;
+    // Non-StaticMesh layer loads still in flight (async, ADR-0014). Pump Update() until this is 0 to drain
+    // abandoned/failed layer reads before asserting a layer is absent.
+    size_t PendingLayerLoadCount() const { return activeLayerLoadOperations_.size(); }
 
     // Priority control
     void SetCellPriority(const CellCoord& coord, float priority);
@@ -309,10 +313,8 @@ private:
     void ProcessUnloadQueue();
     void ProcessCellOpCompletions();
 
-    // Synchronously read one layer's decompressed bytes from the layered cell file (ADR-0014):
-    // <cellDataDirectory>/cell_X_Z<layeredCellExtension>. Returns false if the file or the layer is
-    // absent. Used by LoadCellLayer for non-StaticMesh layers (e.g. Vegetation).
-    bool TryReadLayeredCellLayer(const CellCoord& coord, CellLayer layer, std::vector<uint8_t>& out) const;
+    // Resolve the layered cell file for a coord: <cellDataDirectory>/cell_X_Z<layeredCellExtension> (ADR-0014).
+    std::filesystem::path GetLayeredCellFilePath(const CellCoord& coord) const;
 
     // Cell lifecycle
     struct CellLoadRequest {
@@ -385,6 +387,37 @@ private:
     };
     std::unordered_map<CellCoord, ActiveCellOp, CellCoord::Hash> activeLoadOperations_;
     std::unordered_map<CellCoord, Next::JobHandle, CellCoord::Hash> activeUnloadOperations_;
+
+    // ---- Async non-StaticMesh layer loads (e.g. Vegetation), ADR-0014 ----
+    // A fully SEPARATE path from the StaticMesh op machinery above: keyed by {coord, layer} (StaticMesh and a
+    // data layer must be in flight on the same coord concurrently), committed on the MAIN thread inside the
+    // asyncIO_ read callback (callbacks run in asyncIO_->Update()), never touching completions_ /
+    // ProcessCellOpCompletions. Cancellation is "abandon + reclaim-in-callback": Unload/eviction sets
+    // abandoned=true and LEAVES the op; the read still completes and the callback frees the buffer + drops the
+    // result. The read buffer is thus freed only AFTER the worker is done (in the callback, or at shutdown once
+    // asyncIO_->Shutdown() has joined the workers) -> no mid-read use-after-free.
+    struct CellLayerKey {
+        CellCoord coord;
+        CellLayer layer = CellLayer::StaticMesh;
+        bool operator==(const CellLayerKey& other) const { return coord == other.coord && layer == other.layer; }
+        struct Hash {
+            size_t operator()(const CellLayerKey& k) const {
+                size_t h = CellCoord::Hash{}(k.coord);
+                // hash_combine (not <<4): fold the layer in without dropping high-bit entropy.
+                h ^=
+                    std::hash<uint32_t>{}(static_cast<uint32_t>(k.layer)) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+                return h;
+            }
+        };
+    };
+    struct ActiveLayerOp {
+        uint64_t asyncRequestId = 0;
+        std::vector<uint8_t> rawReadBuffer;  // whole layered-cell file; worker reads in, callback extracts
+        bool abandoned = false;              // set by Unload/eviction; callback discards + reclaims the op
+    };
+    std::unordered_map<CellLayerKey, ActiveLayerOp, CellLayerKey::Hash> activeLayerLoadOperations_;
+    // Main-thread completion for an async layer read kicked by LoadCellLayer (runs inside asyncIO_->Update()).
+    void FinishLayerLoad(const CellLayerKey& key, bool success);
 
     struct CellOpCompletion {
         CellCoord coord;

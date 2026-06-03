@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "next/streaming/streaming_manager.h"
@@ -34,6 +35,26 @@ VegetationDef Forest() {
     return b.Take();
 }
 
+// LoadCellLayer is async (ADR-0014): pump the streaming Update loop (drives the main-thread layer commit) until
+// the layer loads, or bail after a bounded wait. The manager runs real IO worker threads -> the 1ms yield is
+// load-bearing.
+bool PumpUntilLayerLoaded(StreamingManager& mgr, const CellCoord& coord, CellLayer layer) {
+    for (int i = 0; i < 3000 && !mgr.IsCellLayerLoaded(coord, layer); ++i) {
+        mgr.Update(0.016f, Vec3(0, 0, 0), Vec3(0, 0, -1), Vec3(0, 0, 0));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return mgr.IsCellLayerLoaded(coord, layer);
+}
+
+// Pump until every async layer read has drained. Use between an unload and a same-layer reload (gap #6): a
+// re-load issued while a prior read is still in flight is coalesced (dropped), so callers must reach quiescence.
+void PumpUntilLayersQuiescent(StreamingManager& mgr) {
+    for (int i = 0; i < 3000 && mgr.PendingLayerLoadCount() != 0; ++i) {
+        mgr.Update(0.016f, Vec3(0, 0, 0), Vec3(0, 0, -1), Vec3(0, 0, 0));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
 }  // namespace
 
 TEST(VegetationStreamingSystem, AutoIngestsAndEvictsFromStreaming) {
@@ -63,6 +84,7 @@ TEST(VegetationStreamingSystem, AutoIngestsAndEvictsFromStreaming) {
         (resolvedDir / ("cell_" + std::to_string(coord.x) + "_" + std::to_string(coord.z) + ".nlc")).string(),
         cooked.bytes));
     mgr.LoadCellLayer(coord, CellLayer::Vegetation);
+    ASSERT_TRUE(PumpUntilLayerLoaded(mgr, coord, CellLayer::Vegetation));
 
     // The system maintains the store with NO manual store.LoadCell/UnloadCell.
     VegetationStreamingSystem sys;
@@ -117,6 +139,7 @@ TEST(VegetationStreamingSystem, ReingestsOnLayerReload) {
     ASSERT_TRUE(dense.ok);
     ASSERT_TRUE(WriteCellFile(path, dense.bytes));
     mgr.LoadCellLayer(coord, CellLayer::Vegetation);
+    ASSERT_TRUE(PumpUntilLayerLoaded(mgr, coord, CellLayer::Vegetation));
 
     VegetationStreamingSystem sys;
     sys.Sync(mgr);
@@ -134,10 +157,12 @@ TEST(VegetationStreamingSystem, ReingestsOnLayerReload) {
     ASSERT_NE(sparse.instanceCount, dense.instanceCount);
 
     mgr.UnloadCellLayer(coord, CellLayer::Vegetation);
+    PumpUntilLayersQuiescent(mgr);  // drain the in-flight read before reloading the same layer (gap #6)
     ASSERT_TRUE(WriteCellFile(path, sparse.bytes));
     mgr.LoadCellLayer(coord, CellLayer::Vegetation);
+    ASSERT_TRUE(PumpUntilLayerLoaded(mgr, coord, CellLayer::Vegetation));
 
-    // Without the (ptr,size) content token, Sync would see the coord already present and keep stale data.
+    // Without the generation token, Sync would see the coord already present and keep stale data.
     const size_t reingested = sys.Sync(mgr);
     EXPECT_GE(reingested, 1u);
     const size_t count2 = sys.Store().LiveInstanceCount();
@@ -190,6 +215,7 @@ TEST(VegetationStreamingSystem, ReingestsOnSameSizeReload) {
 
     ASSERT_TRUE(WriteCellFile(path, a.bytes));
     mgr.LoadCellLayer(coord, CellLayer::Vegetation);
+    ASSERT_TRUE(PumpUntilLayerLoaded(mgr, coord, CellLayer::Vegetation));
     VegetationStreamingSystem sys;
     sys.Sync(mgr);
     const VegetationInstance* before = sys.Store().Find(VegetationKey{coord.x, coord.z, 0});
@@ -197,8 +223,10 @@ TEST(VegetationStreamingSystem, ReingestsOnSameSizeReload) {
     const float beforeX = before->position[0];
 
     mgr.UnloadCellLayer(coord, CellLayer::Vegetation);
+    PumpUntilLayersQuiescent(mgr);  // drain the in-flight read before reloading the same layer (gap #6)
     ASSERT_TRUE(WriteCellFile(path, bb.bytes));
     mgr.LoadCellLayer(coord, CellLayer::Vegetation);
+    ASSERT_TRUE(PumpUntilLayerLoaded(mgr, coord, CellLayer::Vegetation));
     const size_t changed = sys.Sync(mgr);
     EXPECT_GE(changed, 1u);  // generation bumped -> re-ingested despite identical byte size
     const VegetationInstance* after = sys.Store().Find(VegetationKey{coord.x, coord.z, 0});
