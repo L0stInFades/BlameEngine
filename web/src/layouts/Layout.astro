@@ -24,6 +24,7 @@ import '../styles/global.css'
     />
   </head>
   <body>
+    <canvas class="world-canvas" id="worldCanvas" aria-hidden="true"></canvas>
     <!-- ============ MARGINALIA FRAME ============ -->
     <div class="frame" aria-hidden="true">
       <span class="frame__bl">C++23 · NVIM—EMBED · WASM</span>
@@ -36,7 +37,9 @@ import '../styles/global.css'
     <!-- ============ GLOBAL OVERLAY (grain noise, one composited layer) ============ -->
     <div class="fx" id="fx" aria-hidden="true"></div>
 
-    <slot />
+    <main class="page-shell" id="pageShell">
+      <slot />
+    </main>
 
     <script>
       import Lenis from 'lenis'
@@ -165,6 +168,45 @@ import '../styles/global.css'
         window.addEventListener('scroll', () => update(window.scrollY), { passive: true })
       }
 
+      // --- same-document View Transition for anchor navigation ---
+      let routeBusy = false
+      const runRouteTransition = async (el: HTMLElement, href: string) => {
+        if (routeBusy) return
+
+        routeBusy = true
+        const direction = el.offsetTop < window.scrollY ? -1 : 1
+        const scrollToTarget = () => {
+          if (lenis) {
+            wake()
+            lenis.scrollTo(el, { offset: href === '#top' ? 0 : -80, immediate: true })
+          } else {
+            window.scrollTo({ top: href === '#top' ? 0 : Math.max(0, el.offsetTop - 80), behavior: 'instant' })
+          }
+          history.pushState(null, '', href)
+          measure()
+          update(window.scrollY)
+        }
+
+        document.documentElement.classList.add('is-anchor-transitioning')
+        document.documentElement.classList.toggle('route-backward', direction < 0)
+        document.documentElement.classList.toggle('route-forward', direction > 0)
+        document.body.classList.add('is-anchor-transitioning')
+
+        try {
+          if ('startViewTransition' in document) {
+            const transition = document.startViewTransition(scrollToTarget)
+            await transition.finished
+          } else {
+            scrollToTarget()
+          }
+        } finally {
+          document.documentElement.classList.remove('is-anchor-transitioning')
+          document.documentElement.classList.remove('route-forward', 'route-backward')
+          document.body.classList.remove('is-anchor-transitioning')
+          routeBusy = false
+        }
+      }
+
       // --- anchor smooth scroll ---
       window.addEventListener('click', (e) => {
         const a = (e.target as HTMLElement).closest('a')
@@ -174,12 +216,62 @@ import '../styles/global.css'
           href === '#top' ? document.documentElement : document.querySelector<HTMLElement>(href)
         if (!el) return
         e.preventDefault()
-        if (lenis) {
-          wake()
-          lenis.scrollTo(el, { offset: href === '#top' ? 0 : -80 })
-        } else el.scrollIntoView()
-        history.pushState(null, '', href)
-      })
+        runRouteTransition(el, href)
+      }, { capture: true })
+
+      // --- low-cost world/vegetation backdrop ---
+      const canvas = document.getElementById('worldCanvas') as HTMLCanvasElement | null
+      const ctx = canvas?.getContext('2d')
+      if (canvas && ctx) {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2)
+        let w = 0
+        let h = 0
+        let blades: { x: number; y: number; h: number; s: number; c: number }[] = []
+        const resizeWorld = () => {
+          w = canvas.clientWidth
+          h = canvas.clientHeight
+          canvas.width = Math.floor(w * dpr)
+          canvas.height = Math.floor(h * dpr)
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+          blades = Array.from({ length: Math.min(560, Math.max(260, Math.floor(w * 0.38))) }, () => ({
+            x: Math.random() * w,
+            y: h * (0.46 + Math.random() * 0.5),
+            h: 18 + Math.random() * 86,
+            s: Math.random() * Math.PI * 2,
+            c: 88 + Math.random() * 62,
+          }))
+        }
+        const drawWorld = (time = 0) => {
+          ctx.clearRect(0, 0, w, h)
+          const sky = ctx.createLinearGradient(0, 0, 0, h)
+          sky.addColorStop(0, '#111827')
+          sky.addColorStop(0.54, '#0d1713')
+          sky.addColorStop(1, '#050608')
+          ctx.fillStyle = sky
+          ctx.fillRect(0, 0, w, h)
+          ctx.strokeStyle = 'rgba(10, 232, 194, 0.09)'
+          for (let i = 0; i < 10; i++) {
+            const y = h * 0.52 + i * 35
+            ctx.beginPath()
+            ctx.moveTo(0, y)
+            ctx.lineTo(w, y + i * 10)
+            ctx.stroke()
+          }
+          for (const blade of blades) {
+            const sway = Math.sin(time * 0.0015 + blade.s + blade.y * 0.01) * 12
+            ctx.strokeStyle = `hsla(${blade.c}, 72%, 45%, 0.34)`
+            ctx.lineWidth = 0.8
+            ctx.beginPath()
+            ctx.moveTo(blade.x, blade.y)
+            ctx.quadraticCurveTo(blade.x + sway * 0.3, blade.y - blade.h * 0.5, blade.x + sway, blade.y - blade.h)
+            ctx.stroke()
+          }
+          if (!REDUCED) requestAnimationFrame(drawWorld)
+        }
+        resizeWorld()
+        window.addEventListener('resize', resizeWorld)
+        drawWorld()
+      }
 
       if (cue) cue.style.transition = 'opacity .3s var(--ease)'
       measure()
