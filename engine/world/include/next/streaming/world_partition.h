@@ -145,8 +145,9 @@ struct CellData {
         uint64_t size;  // Size in bytes
         CellLoadState state;
         uint64_t gpuResourceHandle;  // Handle to GPU resource (if applicable)
+        uint64_t generation;         // bumped on every (re)load -> lets a consumer detect an in-place reload
 
-        LayerData() : data(nullptr), size(0), state(CellLoadState::Unloaded), gpuResourceHandle(0) {}
+        LayerData() : data(nullptr), size(0), state(CellLoadState::Unloaded), gpuResourceHandle(0), generation(0) {}
 
         bool IsLoaded() const { return state == CellLoadState::Loaded; }
         bool IsPending() const {

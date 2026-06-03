@@ -27,14 +27,13 @@ size_t VegetationStreamingSystem::Sync(const Next::Streaming::StreamingManager& 
         }
         nowLoaded.insert(coord);
 
-        const void* dataPtr = it->second.data;
-        const size_t dataSize = it->second.size;
+        const uint64_t generation = it->second.generation;
         const auto ingested = ingested_.find(coord);
         const bool fresh = ingested == ingested_.end();
-        const bool reloaded = !fresh && (ingested->second.first != dataPtr || ingested->second.second != dataSize);
+        const bool reloaded = !fresh && ingested->second != generation;
         if (fresh || reloaded) {
-            if (store_.LoadCell(coord.x, coord.z, static_cast<const uint8_t*>(dataPtr), dataSize)) {
-                ingested_[coord] = std::make_pair(dataPtr, dataSize);  // LoadCell replaces on reload
+            if (store_.LoadCell(coord.x, coord.z, static_cast<const uint8_t*>(it->second.data), it->second.size)) {
+                ingested_[coord] = generation;  // LoadCell replaces on reload
                 ++changed;
             }
         }

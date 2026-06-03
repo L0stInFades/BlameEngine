@@ -1,8 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <unordered_map>
-#include <utility>
 
 #include "next/streaming/streaming_manager.h"
 #include "next/vegetation_world/vegetation_store.h"
@@ -29,12 +29,9 @@ public:
 
 private:
     VegetationStore store_;
-    // coord -> (data ptr, size) of the layer bytes last ingested. The (ptr,size) token detects an
-    // in-place unload+reload (same coord, different allocation/size) so the store doesn't serve stale
-    // instances. (A reload to the identical ptr AND size with different content is not distinguished —
-    // it would need a per-layer version/checksum, which the streaming LayerData does not yet carry.)
-    std::unordered_map<Next::Streaming::CellCoord, std::pair<const void*, size_t>, Next::Streaming::CellCoord::Hash>
-        ingested_;
+    // coord -> the LayerData.generation last ingested. The generation is bumped on every (re)load, so an
+    // in-place reload is re-ingested even when the memory pool hands back the same address AND size.
+    std::unordered_map<Next::Streaming::CellCoord, uint64_t, Next::Streaming::CellCoord::Hash> ingested_;
 };
 
 }  // namespace Next::vegetation

@@ -364,6 +364,7 @@ private:
     std::unique_ptr<LODSystem> lodSystem_;
     std::unique_ptr<EvictionPolicy> evictionPolicy_;
     std::unique_ptr<StreamingMemoryPool> memoryPool_;
+    uint64_t nextLayerGeneration_ = 1;  // monotonic; stamped on each layer (re)load for reload detection
 
     // Load/unload queues
     std::vector<CellLoadRequest> loadQueue_;

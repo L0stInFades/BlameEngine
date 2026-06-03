@@ -148,3 +148,64 @@ TEST(VegetationStreamingSystem, ReingestsOnLayerReload) {
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }
+
+TEST(VegetationStreamingSystem, ReingestsOnSameSizeReload) {
+    const std::filesystem::path dir = MakeTempDir();
+
+    StreamingManager mgr;
+    StreamingManagerConfig cfg;
+    cfg.memoryBudgetMB = 64;
+    cfg.loadRadius = 128.0f;
+    cfg.unloadRadius = 256.0f;
+    cfg.enablePrediction = false;
+    cfg.allowPlaceholderCellLoad = true;
+    cfg.cellDataDirectory = dir.wstring();
+    ASSERT_TRUE(mgr.Initialize(cfg));
+    mgr.Update(0.016f, Vec3(0, 0, 0), Vec3(0, 0, -1), Vec3(0, 0, 0));
+    const std::vector<CellCoord> loaded = mgr.GetLoadedCells();
+    ASSERT_FALSE(loaded.empty());
+    const CellCoord coord = loaded.front();
+
+    const std::filesystem::path resolvedDir(mgr.GetConfig().cellDataDirectory);
+    std::filesystem::create_directories(resolvedDir);
+    const std::string path =
+        (resolvedDir / ("cell_" + std::to_string(coord.x) + "_" + std::to_string(coord.z) + ".nlc")).string();
+    FlatTerrainSampler terrain;
+
+    // Two defs identical except the seed; spacing 0 makes the instance count seed-independent, so the
+    // cooked blobs are the SAME size with DIFFERENT content -> exactly the (ptr,size) token's blind spot.
+    auto cookSeed = [&](uint64_t seed) {
+        VegetationBuilder b("same-size");
+        b.WithMasterSeed(seed).WithMaxInstancesPerCell(100000);
+        b.AddSpecies(101);
+        b.WithDensity(0.03f).WithSpacing(0.0f);
+        return CookVegetationCell(b.Take(), terrain, coord.x, coord.z, 64.0f);
+    };
+    const CookResult a = cookSeed(1);
+    const CookResult bb = cookSeed(999);
+    ASSERT_TRUE(a.ok);
+    ASSERT_TRUE(bb.ok);
+    ASSERT_EQ(a.bytes.size(), bb.bytes.size());  // same byte size
+    ASSERT_EQ(a.instanceCount, bb.instanceCount);
+
+    ASSERT_TRUE(WriteCellFile(path, a.bytes));
+    mgr.LoadCellLayer(coord, CellLayer::Vegetation);
+    VegetationStreamingSystem sys;
+    sys.Sync(mgr);
+    const VegetationInstance* before = sys.Store().Find(VegetationKey{coord.x, coord.z, 0});
+    ASSERT_NE(before, nullptr);
+    const float beforeX = before->position[0];
+
+    mgr.UnloadCellLayer(coord, CellLayer::Vegetation);
+    ASSERT_TRUE(WriteCellFile(path, bb.bytes));
+    mgr.LoadCellLayer(coord, CellLayer::Vegetation);
+    const size_t changed = sys.Sync(mgr);
+    EXPECT_GE(changed, 1u);  // generation bumped -> re-ingested despite identical byte size
+    const VegetationInstance* after = sys.Store().Find(VegetationKey{coord.x, coord.z, 0});
+    ASSERT_NE(after, nullptr);
+    EXPECT_NE(after->position[0], beforeX);  // store now reflects the NEW content, not stale
+
+    mgr.Shutdown();
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}

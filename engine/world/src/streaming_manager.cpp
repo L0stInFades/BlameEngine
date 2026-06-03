@@ -1070,6 +1070,7 @@ void StreamingManager::LoadCellLayer(const CellCoord& coord, CellLayer layer, fl
             ld.data = mem;
             ld.size = layerBytes.size();
             ld.state = CellLoadState::Loaded;
+            ld.generation = nextLayerGeneration_++;
             cell->layers[layer] = ld;
             cell->metadata.SetLayerPresent(layer);  // memory is counted via CellData::MemorySize() (sums layers)
             return;
@@ -1089,6 +1090,7 @@ void StreamingManager::LoadCellLayer(const CellCoord& coord, CellLayer layer, fl
     ld.data = nullptr;
     ld.size = 0;
     ld.state = CellLoadState::Loaded;
+    ld.generation = nextLayerGeneration_++;
     cell->layers[layer] = ld;
     cell->metadata.SetLayerPresent(layer);
     cell->isPlaceholderData = true;
