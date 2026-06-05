@@ -10,12 +10,17 @@
 set(WASM_GUESTS_OUT ${CMAKE_BINARY_DIR}/wasm_guests CACHE INTERNAL "compiled wasm guest dir")
 file(MAKE_DIRECTORY ${WASM_GUESTS_OUT})
 
-find_program(WASM_CLANGXX NAMES clang++
-    PATHS /usr/local/opt/llvm/bin /opt/homebrew/opt/llvm/bin NO_DEFAULT_PATH)
+set(_llvm_dirs
+    /usr/local/opt/llvm/bin
+    /opt/homebrew/opt/llvm/bin
+    "C:/Program Files/LLVM/bin"
+)
 file(GLOB _lld_dirs
     /usr/local/opt/lld/bin /opt/homebrew/opt/lld/bin
     /usr/local/Cellar/lld@*/*/bin /opt/homebrew/Cellar/lld@*/*/bin
-    /usr/local/opt/llvm/bin /opt/homebrew/opt/llvm/bin)
+    /usr/local/opt/llvm/bin /opt/homebrew/opt/llvm/bin
+    "C:/Program Files/LLVM/bin")
+find_program(WASM_CLANGXX NAMES clang++ clang++-22 PATHS ${_llvm_dirs})
 find_program(WASM_LD NAMES wasm-ld PATHS ${_lld_dirs})
 find_program(RUSTC NAMES rustc)
 
