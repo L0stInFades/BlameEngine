@@ -19,6 +19,7 @@ class World;
 namespace Next::gameapi {
 
 struct IWorldQuery;  // world_query.h — abstract spatial query, implemented by the gameplay layer
+struct IWaterQuery;  // world_query.h — abstract water-state query, implemented by the water layer
 
 // EntityId (ABI) <-> ECS Entity. EntityId is the Entity's 64-bit packed form; 0 stays invalid.
 // The bit layout lives once on Entity itself (Entity::FromPacked / operator uint64_t).
@@ -38,6 +39,7 @@ struct GameApiConfig {
     const SimClock* clock = nullptr;
     ObjectiveStore* objectives = nullptr;  // optional; Tasks calls return NotFound if null
     IWorldQuery* worldQuery = nullptr;     // optional; Raycast returns Unsupported if null
+    IWaterQuery* waterQuery = nullptr;     // optional; GetWaterState returns Unsupported if null
     EntityId self = kInvalidEntity;
     CapabilitySet capabilities = CapabilitySet::None();
 
@@ -87,6 +89,8 @@ public:
     Status SenseNearest(float radius, uint32_t tag, EntityId& outEntity, float& outDistance);
     // Cast a ray against the physical world (via the injected IWorldQuery). Unsupported if none.
     Status Raycast(const Vec3Abi& origin, const Vec3Abi& direction, float maxDistance, RaycastResult& out);
+    // Read the water state at a world point (via the injected IWaterQuery). Unsupported if none.
+    Status GetWaterState(const Vec3Abi& point, WaterStateResult& out);
 
     // --- Actuate domain (intents) ---
     Status MoveTo(const Vec3Abi& target, float maxSpeed);
@@ -120,6 +124,7 @@ private:
     const SimClock* clock_;
     ObjectiveStore* objectives_;
     IWorldQuery* worldQuery_;
+    IWaterQuery* waterQuery_;
     EntityId self_;
     CapabilitySet caps_;
 

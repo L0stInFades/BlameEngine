@@ -19,6 +19,7 @@ target_link_libraries(next_assetc PRIVATE
     next_asset
     next_compression
     next_vegetation_world
+    next_water_world
 )
 
 if(NOT MSVC)

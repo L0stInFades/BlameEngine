@@ -6,6 +6,10 @@ cmake_minimum_required(VERSION 3.20)
 
 add_library(next_boundary STATIC
     src/snapshot_publisher.cpp
+    src/snapshot_receiver.cpp
+    src/snapshot_codec.cpp
+    src/datagram_transport.cpp
+    src/udp_datagram.cpp
 )
 
 target_include_directories(next_boundary PUBLIC

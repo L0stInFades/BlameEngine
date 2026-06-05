@@ -6,7 +6,7 @@
 #include "next/physics/jolt_physics_world.h"
 
 #include <cstdint>
-#include <map>
+#include <unordered_map>
 
 #include <Jolt/Jolt.h>
 // (Jolt.h must be first.)
@@ -154,13 +154,15 @@ public:
             settings.mMassPropertiesOverride.mMass = mass;
         }
 
+        const BodyId id = nextId_++;
+        settings.mUserData = static_cast<JPH::uint64>(id);
+
         JPH::Body* body = bi.CreateBody(settings);
         if (body == nullptr) {
             return kInvalidBody;  // body budget exhausted
         }
         bi.AddBody(body->GetID(),
                    motion == JPH::EMotionType::Static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
-        const BodyId id = nextId_++;
         bodies_.emplace(id, body->GetID());
         return id;
     }
@@ -204,6 +206,59 @@ public:
         }
     }
 
+    // Jolt accumulates AddForce until the next Update() and clears it afterward — exactly the
+    // per-Step semantics our IPhysicsWorld contract specifies. Re-activate the body so a sleeping
+    // float gets woken by the force (a body parked on the seabed must respond when water rises).
+    void AddForce(BodyId id, const float force[3]) override {
+        const JPH::BodyID* jid = Find(id);
+        if (jid != nullptr) {
+            JPH::BodyInterface& bi = system_.GetBodyInterface();
+            bi.ActivateBody(*jid);
+            bi.AddForce(*jid, JPH::Vec3(force[0], force[1], force[2]));
+        }
+    }
+
+    void AddImpulse(BodyId id, const float impulse[3]) override {
+        const JPH::BodyID* jid = Find(id);
+        if (jid != nullptr) {
+            // BodyInterface::AddImpulse is mass-normalized internally (dv = impulse / mass) and wakes
+            // the body. Matches the reference backend's AddImpulse semantics.
+            system_.GetBodyInterface().AddImpulse(*jid, JPH::Vec3(impulse[0], impulse[1], impulse[2]));
+        }
+    }
+
+    void AddTorque(BodyId id, const float torque[3]) override {
+        const JPH::BodyID* jid = Find(id);
+        if (jid != nullptr) {
+            JPH::BodyInterface& bi = system_.GetBodyInterface();
+            bi.ActivateBody(*jid);
+            bi.AddTorque(*jid, JPH::Vec3(torque[0], torque[1], torque[2]));
+        }
+    }
+
+    void AddForceAtPosition(BodyId id, const float force[3], const float worldPoint[3]) override {
+        const JPH::BodyID* jid = Find(id);
+        if (jid != nullptr) {
+            JPH::BodyInterface& bi = system_.GetBodyInterface();
+            bi.ActivateBody(*jid);
+            // Jolt's AddForce(point) overload accumulates the force AND the induced torque about the COM.
+            bi.AddForce(*jid, JPH::Vec3(force[0], force[1], force[2]),
+                        JPH::RVec3(worldPoint[0], worldPoint[1], worldPoint[2]));
+        }
+    }
+
+    void GetAngularVelocity(BodyId id, float outAngular[3]) const override {
+        const JPH::BodyID* jid = Find(id);
+        if (jid == nullptr) {
+            outAngular[0] = outAngular[1] = outAngular[2] = 0.0f;
+            return;
+        }
+        const JPH::Vec3 w = system_.GetBodyInterface().GetAngularVelocity(*jid);
+        outAngular[0] = w.GetX();
+        outAngular[1] = w.GetY();
+        outAngular[2] = w.GetZ();
+    }
+
     void GetTransform(BodyId id, float outPos[3], float outRot[4]) const override {
         const JPH::BodyID* jid = Find(id);
         if (jid == nullptr) {
@@ -239,12 +294,7 @@ public:
             return result;
         }
         result.hit = true;
-        for (const auto& [id, jid] : bodies_) {
-            if (jid == hit.mBodyID) {
-                result.body = id;
-                break;
-            }
-        }
+        result.body = static_cast<BodyId>(system_.GetBodyInterface().GetUserData(hit.mBodyID));
         result.distance = hit.mFraction * maxDistance;
         const JPH::RVec3 worldPoint = ray.GetPointOnRay(hit.mFraction);
         result.point[0] = static_cast<float>(worldPoint.GetX());
@@ -259,8 +309,7 @@ public:
         const JPH::ShapeRefC shape = bi.GetShape(hit.mBodyID);
         const JPH::RMat44 worldFromLocal = bi.GetWorldTransform(hit.mBodyID);
         if (shape != nullptr) {
-            const JPH::Vec3 localPoint =
-                JPH::Vec3(worldFromLocal.Inversed() * worldPoint);
+            const JPH::Vec3 localPoint = JPH::Vec3(worldFromLocal.Inversed() * worldPoint);
             const JPH::Vec3 localNormal = shape->GetSurfaceNormal(hit.mSubShapeID2, localPoint);
             const JPH::Vec3 worldNormal = worldFromLocal.Multiply3x3(localNormal);
             const float nl = worldNormal.Length();
@@ -308,7 +357,7 @@ private:
     JPH::PhysicsSystem system_;
     std::unique_ptr<JPH::TempAllocator> tempAllocator_;
     std::unique_ptr<JPH::JobSystem> jobSystem_;
-    std::map<BodyId, JPH::BodyID> bodies_;
+    std::unordered_map<BodyId, JPH::BodyID> bodies_;
     BodyId nextId_ = 1;
 };
 

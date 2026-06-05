@@ -87,7 +87,7 @@ TEST(SpscRing, FullDropsPush) {
 
 TEST(SnapshotPublisher, SpawnThenSteadyThenMoveThenDespawn) {
     World world;
-    SnapshotPublisher pub;
+    SnapshotPublisher pub(DeltaMode::PerFrame);  // legacy per-build baseline (lossless-channel semantics)
     SnapshotBlock blk;
 
     Entity e = world.CreateEntity();
@@ -125,7 +125,7 @@ TEST(SnapshotPublisher, NonFiniteTransformIsStableNoSpuriousUpdate) {
     // A NaN coordinate must be sanitized before packing: otherwise NaN != NaN makes the entity
     // look "changed" every tick (spurious updates) and quantization becomes non-deterministic.
     World world;
-    SnapshotPublisher pub;
+    SnapshotPublisher pub(DeltaMode::PerFrame);  // legacy per-build baseline (lossless-channel semantics)
     SnapshotBlock blk;
     Entity e = world.CreateEntity();
     auto& t = world.AddComponent<TransformComponent>(e);
@@ -144,7 +144,7 @@ TEST(SnapshotPublisher, NonFiniteTransformIsStableNoSpuriousUpdate) {
 
 TEST(SnapshotPublisher, VisualSwapBecomesDespawnPlusSpawn) {
     World world;
-    SnapshotPublisher pub;
+    SnapshotPublisher pub(DeltaMode::PerFrame);  // legacy per-build baseline (lossless-channel semantics)
     SnapshotBlock blk;
 
     Entity e = world.CreateEntity();
@@ -162,7 +162,7 @@ TEST(SnapshotPublisher, VisualSwapBecomesDespawnPlusSpawn) {
 
 TEST(SnapshotPublisher, VisualSwapAppliedInContractOrderKeepsActor) {
     World world;
-    SnapshotPublisher pub;
+    SnapshotPublisher pub(DeltaMode::PerFrame);  // legacy per-build baseline (lossless-channel semantics)
     SnapshotBlock blk;
     Entity e = world.CreateEntity();
     world.AddComponent<TransformComponent>(e);
@@ -192,7 +192,7 @@ TEST(SnapshotPublisher, VisualSwapAppliedInContractOrderKeepsActor) {
 
 TEST(SnapshotPublisher, SpawnsAreOrderedByEntityId) {
     World world;
-    SnapshotPublisher pub;
+    SnapshotPublisher pub(DeltaMode::PerFrame);  // legacy per-build baseline (lossless-channel semantics)
     SnapshotBlock blk;
     for (int i = 0; i < 6; ++i) {
         Entity e = world.CreateEntity();
@@ -236,7 +236,7 @@ TEST(InProcessTransportIntegration, SnapshotEventCommandRoundTrip) {
 
 TEST(InProcessTransportIntegration, PublisherDrivesTransport) {
     World world;
-    SnapshotPublisher pub;
+    SnapshotPublisher pub(DeltaMode::PerFrame);  // legacy per-build baseline (lossless-channel semantics)
     InProcessTransport transport;
 
     Entity e = world.CreateEntity();

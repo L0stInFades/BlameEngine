@@ -159,6 +159,7 @@ TEST(VerticalSlice, SandboxedGuestSeeksObjectiveAndStreamsToView) {
             if (u.id == agentId)
                 sawAgentUpdate = true;
         }
+        publisher.Acknowledge(snap->sequence);  // lossless consumer acks -> deltas compress to updates
     }
 
     // The agent reached the objective (snap-to-target guarantees exact arrival).

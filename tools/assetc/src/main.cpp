@@ -1,6 +1,7 @@
 #include "next/foundation/logger.h"
 #include "asset_compiler.h"
 #include "next/vegetation_world/vegetation_cook.h"
+#include "next/water_world/water_cook.h"
 #include <iostream>
 #include <filesystem>
 #include <fstream>
@@ -27,6 +28,9 @@ int main(int argc, char* argv[]) {
             << std::endl;
         std::cout << "  next_assetc vegetation <def.txt> <cellX> <cellZ> <cellSize> <out.ncell> [none|lz4|zstd] - Cook "
                      "a vegetation layer cell"
+                  << std::endl;
+        std::cout << "  next_assetc water <scene.txt> <cellX> <cellZ> <cellSize> <out.ncell> [none|lz4|zstd] - Cook "
+                     "a water layer cell"
                   << std::endl;
         return 1;
     }
@@ -231,6 +235,62 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         NEXT_LOG_INFO("vegetation: cooked %zu instances -> %s (%zu bytes)", result.instanceCount, outPath.c_str(),
+                      result.bytes.size());
+
+    } else if (command == "water") {
+        // next_assetc water <scene.txt> <cellX> <cellZ> <cellSize> <out.ncell> [none|lz4|zstd]
+        // Cooks a layered cell carrying the Water layer (the bodies whose footprint overlaps the cell).
+        if (argc < 7) {
+            std::cout << "Error: water requires <scene.txt> <cellX> <cellZ> <cellSize> <out.ncell> [none|lz4|zstd]"
+                      << std::endl;
+            return 1;
+        }
+        const std::string defPath = argv[2];
+        const int32_t cellX = static_cast<int32_t>(std::atoi(argv[3]));
+        const int32_t cellZ = static_cast<int32_t>(std::atoi(argv[4]));
+        const float cellSize = static_cast<float>(std::atof(argv[5]));
+        const std::string outPath = argv[6];
+        const std::string codecName = argc >= 8 ? argv[7] : "none";
+
+        std::ifstream defFile(defPath, std::ios::binary);
+        if (!defFile) {
+            NEXT_LOG_ERROR("water: cannot open scene file %s", defPath.c_str());
+            return 1;
+        }
+        std::stringstream ss;
+        ss << defFile.rdbuf();
+        const std::string defText = ss.str();
+
+        Next::water::WaterSceneDef scene;
+        std::string parseErr;
+        if (!Next::water::ParseWaterDefText(defText, scene, parseErr)) {
+            NEXT_LOG_ERROR("water: scene parse error: %s", parseErr.c_str());
+            return 1;
+        }
+
+        Next::Streaming::CellFileCompression codec = Next::Streaming::CellFileCompression::None;
+        if (codecName == "lz4") {
+            codec = Next::Streaming::CellFileCompression::LZ4;
+        } else if (codecName == "zstd") {
+            codec = Next::Streaming::CellFileCompression::Zstd;
+        } else if (codecName != "none") {
+            NEXT_LOG_ERROR("water: unknown codec %s (use none|lz4|zstd)", codecName.c_str());
+            return 1;
+        }
+
+        const Next::water::WaterCookResult result = Next::water::CookWaterCell(scene, cellX, cellZ, cellSize, codec);
+        if (!result.ok) {
+            NEXT_LOG_ERROR("water: scene rejected (%zu validation errors)", result.report.errors.size());
+            for (const auto& e : result.report.errors) {
+                NEXT_LOG_ERROR("  - %s: %s", Next::water::ToString(e.code), e.detail.c_str());
+            }
+            return 1;
+        }
+        if (!Next::water::WriteWaterCellFileMerged(outPath, result.bytes)) {
+            NEXT_LOG_ERROR("water: failed to write %s", outPath.c_str());
+            return 1;
+        }
+        NEXT_LOG_INFO("water: cooked %zu bodies -> %s (%zu bytes)", result.bodyCount, outPath.c_str(),
                       result.bytes.size());
 
     } else {

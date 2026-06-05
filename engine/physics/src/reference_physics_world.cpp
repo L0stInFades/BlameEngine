@@ -34,9 +34,31 @@ BodyId ReferencePhysicsWorld::CreateBody(const BodyDesc& desc) {
     for (int i = 0; i < 3; ++i) {
         b.position[i] = desc.position[i];
         b.velocity[i] = desc.linearVelocity[i];
+        b.force[i] = 0.0f;
     }
     for (int i = 0; i < 4; ++i) {
         b.rotation[i] = desc.rotation[i];
+    }
+    // Angular state + a diagonal (body ~ world for this stand-in) inverse inertia, so torque maps to
+    // angular acceleration. Box: I about an axis uses the two PERPENDICULAR half-extents; sphere: 2/5 m r^2.
+    const float m = b.desc.mass;
+    float inertia[3];
+    if (b.desc.shape == ShapeType::Sphere) {
+        const float r = b.desc.halfExtents[0];
+        const float s = (2.0f / 5.0f) * m * r * r;
+        inertia[0] = inertia[1] = inertia[2] = s;
+    } else {
+        const float hx = b.desc.halfExtents[0];
+        const float hy = b.desc.halfExtents[1];
+        const float hz = b.desc.halfExtents[2];
+        inertia[0] = (1.0f / 3.0f) * m * ((hy * hy) + (hz * hz));
+        inertia[1] = (1.0f / 3.0f) * m * ((hx * hx) + (hz * hz));
+        inertia[2] = (1.0f / 3.0f) * m * ((hx * hx) + (hy * hy));
+    }
+    for (int i = 0; i < 3; ++i) {
+        b.angularVelocity[i] = 0.0f;
+        b.torque[i] = 0.0f;
+        b.invInertia[i] = (inertia[i] > 1e-12f) ? (1.0f / inertia[i]) : 0.0f;
     }
     bodies_.emplace(id, b);
     return id;
@@ -75,6 +97,90 @@ void ReferencePhysicsWorld::SetPosition(BodyId id, const float p[3]) {
     }
     for (int i = 0; i < 3; ++i) {
         it->second.position[i] = p[i];
+    }
+}
+
+void ReferencePhysicsWorld::AddForce(BodyId id, const float force[3]) {
+    auto it = bodies_.find(id);
+    if (it == bodies_.end() || it->second.desc.motion != MotionType::Dynamic) {
+        return;  // forces act only on dynamic bodies (matches the contract + Jolt)
+    }
+    for (int i = 0; i < 3; ++i) {
+        it->second.force[i] += force[i];
+    }
+}
+
+void ReferencePhysicsWorld::AddImpulse(BodyId id, const float impulse[3]) {
+    auto it = bodies_.find(id);
+    if (it == bodies_.end() || it->second.desc.motion != MotionType::Dynamic) {
+        return;
+    }
+    const float invMass = 1.0f / it->second.desc.mass;  // mass > 0 guaranteed at CreateBody
+    for (int i = 0; i < 3; ++i) {
+        it->second.velocity[i] += impulse[i] * invMass;
+    }
+}
+
+void ReferencePhysicsWorld::AddTorque(BodyId id, const float torque[3]) {
+    auto it = bodies_.find(id);
+    if (it == bodies_.end() || it->second.desc.motion != MotionType::Dynamic) {
+        return;
+    }
+    for (int i = 0; i < 3; ++i) {
+        it->second.torque[i] += torque[i];
+    }
+}
+
+void ReferencePhysicsWorld::AddForceAtPosition(BodyId id, const float force[3], const float worldPoint[3]) {
+    auto it = bodies_.find(id);
+    if (it == bodies_.end() || it->second.desc.motion != MotionType::Dynamic) {
+        return;
+    }
+    Body& b = it->second;
+    for (int i = 0; i < 3; ++i) {
+        b.force[i] += force[i];  // linear part
+    }
+    // Torque about the center of mass: r x F, with r = worldPoint - position.
+    const float rx = worldPoint[0] - b.position[0];
+    const float ry = worldPoint[1] - b.position[1];
+    const float rz = worldPoint[2] - b.position[2];
+    b.torque[0] += (ry * force[2]) - (rz * force[1]);
+    b.torque[1] += (rz * force[0]) - (rx * force[2]);
+    b.torque[2] += (rx * force[1]) - (ry * force[0]);
+}
+
+void ReferencePhysicsWorld::GetAngularVelocity(BodyId id, float outAngular[3]) const {
+    auto it = bodies_.find(id);
+    const float* w = (it != bodies_.end()) ? it->second.angularVelocity : nullptr;
+    for (int i = 0; i < 3; ++i) {
+        outAngular[i] = (w != nullptr) ? w[i] : 0.0f;
+    }
+}
+
+void ReferencePhysicsWorld::IntegrateOrientation(Body& b, float dt) {
+    const float wx = b.angularVelocity[0];
+    const float wy = b.angularVelocity[1];
+    const float wz = b.angularVelocity[2];
+    const float qx = b.rotation[0];
+    const float qy = b.rotation[1];
+    const float qz = b.rotation[2];
+    const float qw = b.rotation[3];
+    // dq/dt = 0.5 * (omega as a pure quaternion) (x) q   (Hamilton product, w-last layout).
+    const float dqx = 0.5f * ((wx * qw) + (wy * qz) - (wz * qy));
+    const float dqy = 0.5f * ((-wx * qz) + (wy * qw) + (wz * qx));
+    const float dqz = 0.5f * ((wx * qy) - (wy * qx) + (wz * qw));
+    const float dqw = 0.5f * ((-wx * qx) - (wy * qy) - (wz * qz));
+    float nx = qx + (dqx * dt);
+    float ny = qy + (dqy * dt);
+    float nz = qz + (dqz * dt);
+    float nw = qw + (dqw * dt);
+    const float len = std::sqrt((nx * nx) + (ny * ny) + (nz * nz) + (nw * nw));
+    if (len > 1e-12f) {
+        const float inv = 1.0f / len;
+        b.rotation[0] = nx * inv;
+        b.rotation[1] = ny * inv;
+        b.rotation[2] = nz * inv;
+        b.rotation[3] = nw * inv;
     }
 }
 
@@ -213,10 +319,23 @@ void ReferencePhysicsWorld::Step(float dt) {
     for (auto& [id, b] : bodies_) {
         (void)id;
         if (b.desc.motion == MotionType::Dynamic) {
+            // Semi-implicit Euler: a = gravity + (accumulated force / mass). Buoyancy / drag / flow
+            // ride on the force accumulator (re-added each tick by the water sim); gravity stays here,
+            // so the net force is physically correct. The accumulator is CONSUMED (cleared) every Step.
+            const float invMass = 1.0f / b.desc.mass;  // mass > 0 guaranteed at CreateBody
             for (int i = 0; i < 3; ++i) {
-                b.velocity[i] += config_.gravity[i] * dt;
+                b.velocity[i] += (config_.gravity[i] + (b.force[i] * invMass)) * dt;
                 b.position[i] += b.velocity[i] * dt;
+                b.force[i] = 0.0f;
             }
+            // Angular: omega += (torque * invInertia) * dt, then integrate + renormalize the quaternion.
+            // The torque accumulator is CONSUMED every Step (like the force accumulator). With no torque
+            // and zero angular velocity this leaves the orientation untouched (existing bodies unaffected).
+            for (int i = 0; i < 3; ++i) {
+                b.angularVelocity[i] += b.torque[i] * b.invInertia[i] * dt;
+                b.torque[i] = 0.0f;
+            }
+            IntegrateOrientation(b, dt);
         } else if (b.desc.motion == MotionType::Kinematic) {
             for (int i = 0; i < 3; ++i) {
                 b.position[i] += b.velocity[i] * dt;

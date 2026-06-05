@@ -62,6 +62,13 @@ struct Fixture {
     }
 };
 
+TEST(GameApiAbi, VersionReflectsAdditiveWaterStateCall) {
+    EXPECT_EQ(kGameApiVersionMajor, 1u);
+    EXPECT_EQ(kGameApiVersionMinor, 1u);
+    EXPECT_EQ(kGameApiAbiVersion, 0x00010001u);
+    EXPECT_EQ(static_cast<uint32_t>(CallId::GetWaterState), 17u);
+}
+
 TEST(GameApiCapabilities, MissingCapabilityIsDenied) {
     Fixture f;
     GameApi api = f.MakeApi(CapabilitySet::ObserverOnly());  // no Actuate
@@ -287,6 +294,105 @@ TEST(AbiDispatch, RaycastRoundTrip) {
     EXPECT_EQ(s, Status::Ok);
     EXPECT_EQ(result.hit, 1u);
     EXPECT_EQ(result.entity, 99u);
+}
+
+// ---- W10: GetWaterState (Sense-gated water query into the ABI) ----
+
+// A scriptable IWaterQuery for testing the GetWaterState facade in isolation from engine/water.
+struct MockWaterQuery : gameapi::IWaterQuery {
+    WaterStateResult next{};
+    int calls = 0;
+    WaterStateResult QueryWater(const float[3]) override {
+        ++calls;
+        return next;
+    }
+};
+
+TEST(GameApiWater, GetWaterStateDeniedWithoutSenseCapability) {
+    Fixture f;
+    MockWaterQuery query;
+    GameApiConfig cfg;
+    cfg.world = &f.world;
+    cfg.clock = &f.clock;
+    cfg.waterQuery = &query;
+    cfg.self = ToEntityId(f.agent);
+    cfg.capabilities = CapabilitySet().Grant(Capability::Observe);  // no Sense
+    GameApi api(cfg);
+    api.BeginTick();
+
+    WaterStateResult out{};
+    EXPECT_EQ(api.GetWaterState(Vec3Abi{0, 0, 0}, out), Status::PermissionDenied);
+    EXPECT_EQ(query.calls, 0);  // denied before the query is consulted
+}
+
+TEST(GameApiWater, GetWaterStateUnsupportedWhenNoQueryWired) {
+    Fixture f;
+    GameApi api = f.MakeApi(CapabilitySet::PlayerDefault());  // Fixture wires no waterQuery
+    api.BeginTick();
+    WaterStateResult out{};
+    EXPECT_EQ(api.GetWaterState(Vec3Abi{0, 0, 0}, out), Status::Unsupported);
+}
+
+TEST(GameApiWater, GetWaterStateDelegatesAndRejectsNaN) {
+    Fixture f;
+    MockWaterQuery query;
+    query.next.inWater = 1;
+    query.next.submerged = 1;
+    query.next.surfaceHeight = 2.5f;
+    query.next.submersionDepth = 1.25f;
+    query.next.flowVelocity = {3.0f, 0.0f, -1.0f};
+    query.next.flags = 0x6;  // some WaterFlags bits
+    GameApiConfig cfg;
+    cfg.world = &f.world;
+    cfg.clock = &f.clock;
+    cfg.waterQuery = &query;
+    cfg.self = ToEntityId(f.agent);
+    cfg.capabilities = CapabilitySet::PlayerDefault();
+    GameApi api(cfg);
+    api.BeginTick();
+
+    WaterStateResult out{};
+    EXPECT_EQ(api.GetWaterState(Vec3Abi{1, -1, 2}, out), Status::Ok);
+    EXPECT_EQ(query.calls, 1);
+    EXPECT_EQ(out.inWater, 1u);
+    EXPECT_EQ(out.submerged, 1u);
+    EXPECT_FLOAT_EQ(out.surfaceHeight, 2.5f);
+    EXPECT_FLOAT_EQ(out.submersionDepth, 1.25f);
+    EXPECT_FLOAT_EQ(out.flowVelocity.x, 3.0f);
+    EXPECT_EQ(out.flags, 0x6u);
+
+    // NaN point is rejected before the query is consulted.
+    const Vec3Abi bad{std::numeric_limits<float>::quiet_NaN(), 0, 0};
+    EXPECT_EQ(api.GetWaterState(bad, out), Status::InvalidArgument);
+    EXPECT_EQ(query.calls, 1);  // not consulted again
+}
+
+TEST(AbiDispatch, GetWaterStateRoundTrip) {
+    Fixture f;
+    MockWaterQuery query;
+    query.next.inWater = 1;
+    query.next.submerged = 1;
+    query.next.submersionDepth = 0.75f;
+    GameApiConfig cfg;
+    cfg.world = &f.world;
+    cfg.clock = &f.clock;
+    cfg.waterQuery = &query;
+    cfg.self = ToEntityId(f.agent);
+    cfg.capabilities = CapabilitySet::PlayerDefault();
+    GameApi api(cfg);
+    api.BeginTick();
+
+    GetWaterStateArgs args{Vec3Abi{5, -2, 5}};
+    WaterStateResult result{};
+    const Status s = AbiDispatch::HostCall(api, CallId::GetWaterState, &args, sizeof(args), &result, sizeof(result));
+    EXPECT_EQ(s, Status::Ok);
+    EXPECT_EQ(result.submerged, 1u);
+    EXPECT_FLOAT_EQ(result.submersionDepth, 0.75f);
+
+    // A too-small ret buffer fails closed (BufferTooSmall), never a partial write.
+    uint8_t tiny[4] = {0, 0, 0, 0};
+    EXPECT_EQ(AbiDispatch::HostCall(api, CallId::GetWaterState, &args, sizeof(args), tiny, sizeof(tiny)),
+              Status::BufferTooSmall);
 }
 
 TEST(GameApiActuate, MoveIntentResolvesDeterministically) {

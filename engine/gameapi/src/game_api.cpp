@@ -35,6 +35,7 @@ GameApi::GameApi(const GameApiConfig& config)
       clock_(config.clock),
       objectives_(config.objectives),
       worldQuery_(config.worldQuery),
+      waterQuery_(config.waterQuery),
       self_(config.self),
       caps_(config.capabilities),
       maxHostCallsPerTick_(config.maxHostCallsPerTick),
@@ -224,6 +225,20 @@ Status GameApi::Raycast(const Vec3Abi& origin, const Vec3Abi& direction, float m
     const float o[3] = {origin.x, origin.y, origin.z};
     const float d[3] = {direction.x, direction.y, direction.z};
     out = worldQuery_->Raycast(o, d, maxDistance);
+    return Status::Ok;
+}
+
+Status GameApi::GetWaterState(const Vec3Abi& point, WaterStateResult& out) {
+    if (Status s = Enter(Capability::Sense); s != Status::Ok)
+        return s;
+    if (!IsFinite(point)) {
+        return Status::InvalidArgument;
+    }
+    if (waterQuery_ == nullptr) {
+        return Status::Unsupported;  // no water query wired (e.g. a sim with no water)
+    }
+    const float p[3] = {point.x, point.y, point.z};
+    out = waterQuery_->QueryWater(p);
     return Status::Ok;
 }
 

@@ -53,7 +53,8 @@ enum class CellLayer : uint32_t {
     Dynamic = 7,     // 动态对象
     Quest = 8,       // 任务点
     Collision = 9,   // 碰撞数据
-    Max = 10
+    Water = 10,      // 水体 (ADR-0015): 权威水体表面参数 + 浮力/流场数据 (核心拥有, UE5 只渲染)
+    Max = 11
 };
 
 // ===== Cell Load State =====
@@ -315,6 +316,7 @@ struct WorldPartitionConfig {
         layerPriority[static_cast<size_t>(CellLayer::Audio)] = 0.3f;
         layerPriority[static_cast<size_t>(CellLayer::Dynamic)] = 0.6f;
         layerPriority[static_cast<size_t>(CellLayer::Quest)] = 0.2f;
+        layerPriority[static_cast<size_t>(CellLayer::Water)] = 0.6f;  // ADR-0015
     }
 };
 

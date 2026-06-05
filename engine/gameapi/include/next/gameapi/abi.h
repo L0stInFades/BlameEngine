@@ -16,7 +16,7 @@
 namespace Next::gameapi {
 
 constexpr uint16_t kGameApiVersionMajor = 1;
-constexpr uint16_t kGameApiVersionMinor = 0;
+constexpr uint16_t kGameApiVersionMinor = 1;
 constexpr uint32_t kGameApiAbiVersion = (static_cast<uint32_t>(kGameApiVersionMajor) << 16) | kGameApiVersionMinor;
 
 // Opaque stable id = the ECS Entity's 64-bit packed form. 0 is always invalid.
@@ -57,6 +57,7 @@ enum class CallId : uint32_t {
     ReportProgress,  // Tasks   (intent)
     Log,             // Log
     Raycast,         // Sense   (spatial query against the physical world)
+    GetWaterState,   // Sense   (water surface/submersion/flow at a world point)
 
     Count_  // sentinel; not a callable id
 };
@@ -76,6 +77,7 @@ constexpr Capability CapabilityFor(CallId id) {
         case CallId::SenseRadius:
         case CallId::SenseNearest:
         case CallId::Raycast:
+        case CallId::GetWaterState:
             return Capability::Sense;
         case CallId::MoveTo:
         case CallId::Stop:
@@ -150,6 +152,23 @@ struct RaycastResult {
     float distance;
 };
 
+// Water state at a world point (ADR-0015 W10): the Sense-domain query that lets player code / AI react
+// to water — am I (or that point) submerged, how deep, where is the surface, is there a current, is the
+// water conductive/lethal. A pure read of the authoritative water sim (no intent). The host evaluates
+// the wavy surface at the shared SimClock, so what a guest reads matches what buoyancy applied.
+struct GetWaterStateArgs {
+    Vec3Abi point;
+};
+struct WaterStateResult {
+    uint32_t inWater;       // 0/1: a water body governs this XZ (you are over/in water)
+    uint32_t submerged;     // 0/1: the point is at/below the surface AND above the body floor
+    uint32_t flags;         // WaterFlags of the governing body (conductive / lethal / breaks-sight / ...)
+    uint32_t reserved;      // padding / future use (kept 0)
+    float surfaceHeight;    // world Y of the water surface at the point's XZ (valid when inWater)
+    float submersionDepth;  // surfaceHeight - point.y (> 0 when submerged; <= 0 otherwise)
+    Vec3Abi flowVelocity;   // current m/s (rivers); zero for still water
+};
+
 // Variable-length entity-list result header. The output buffer is interpreted as this header
 // followed by EntityId[capacity], where capacity = (retLen - sizeof(EntityListHeader)) / 8.
 // `count` is always set to the TOTAL number of matches (so the caller learns it even when the
@@ -195,5 +214,7 @@ static_assert(sizeof(EntityListHeader) == 8, "EntityListHeader ABI layout drift"
 static_assert(sizeof(SendSignalArgs) == 12, "SendSignalArgs ABI layout drift");
 static_assert(sizeof(RaycastArgs) == 28, "RaycastArgs ABI layout drift");
 static_assert(sizeof(RaycastResult) == 48, "RaycastResult ABI layout drift");
+static_assert(sizeof(GetWaterStateArgs) == 12, "GetWaterStateArgs ABI layout drift");
+static_assert(sizeof(WaterStateResult) == 36, "WaterStateResult ABI layout drift");
 
 }  // namespace Next::gameapi

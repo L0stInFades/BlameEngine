@@ -6,13 +6,40 @@
 ## 最关键的一句话
 先把 **headless 世界**做成可玩纵切面(无渲染器),护城河是 **Game API + WASM 玩家代码沙箱**。渲染/物理/内容工具不再是我们的负担(交给 UE5/Jolt)。
 
+## 🔴 审计(2026-06-03,92-agent workflow):usable ≠ artist-deliverable + 4 降级 + 3 BLOCKER
+
+对全部 9 个 `usable` 模块按「能像 UE5/Unity 交给美术/设计师用」+ 无性能问题 + 无重大 bug 核验(构建绿、30/30 ASan 为前提)。结论:**0/9 artist-deliverable**(架构使然:渲染器/编辑器/imgui 已删,创作委托给仓内不存在的 UE5 工程);**4 个连 usable 都撑不起,降级 prototype**;**3 个 BLOCKER**。
+
+**🔴 BLOCKER(先修):**
+| # | 模块 | Bug | 证据 |
+|---|---|---|---|
+| ~~B1~~ ✅ **已修(W13)** | boundary | ~~`SnapshotPublisher` 发相对「上一已发布帧」的 delta、无条件推进基线,却发进故意丢帧的 TripleBuffer → delta 永久丢失、UE5 镜像永久错位~~ → **修复**:delta 改为相对**最后已 ack 的基线**(`DeltaMode::Reliable` 默认)+ 有界 inflight 历史 + **keyframe 回退**(无 ack→每帧整帧);新增 `SnapshotReceiver`(镜像 + baseline 不匹配则 skip、stale 拒绝)+ transport 加 ack 反向通道。`test_boundary_reliability` 证明重丢帧下镜像**收敛**、无永久错位 | 已修复并测试 |
+| B2 | sandbox_wasm | 64KiB 内存红线(`policy.memoryBytes`)在 wasm 后端**完全未实施** → guest 线性内存只受模块自报 + wasm3 的 2GiB 顶 = 内存炸弹 host-OOM;`callDepth` 也未强制 | `wasm_sandbox.cpp` 无 `memoryBytes`/`callDepth`;`m3_NewRuntime` 不设内存限。RefVm 有强制(`ref_vm.cpp:98,122`)→ 同一 policy 两后端含义不同 |
+| B3 | asset | 渲染面读视图 `GetMeshAssetView`/`GetTextureAssetView`/`GetMaterialAssetView` 返回裸 `const void*`,保活 `shared_ptr` 函数返回即析构 → 并发 `UnloadAsset` 即 **use-after-free** | `asset_manager.cpp:897-943` 返回;`:757-762` 释放;测试只在持引用时读,ASan 看不到 |
+
+**完整性闸门有水分**:招牌「30/30 ASan 绿」**排除了最安全敏感/并发最复杂的代码**——`BUILD_WITH_WASM=OFF` + `BUILD_TERMINAL=OFF`,即整个 WASM 前端 + 537 行手写 wasm 改写器 + 整个 Neovim 层都不在门内。
+
+**降级 usable → prototype** 的 4 个及其要害:
+- **serialization**:World 存档序列化器是未实现孤儿头(无 `.cpp`/不在 CMake);Binary `GetObjectKeys()` 恒 false → map 静默丢数据;JSON 无深度上限 → 不可信文件栈溢出 DoS;`ReadInt32/64` 越界 cast → UBSan abort;`Compact` 枚举 → 空指针崩溃。
+- **terminal**:不在 ASan 门内、零单测;nvim 缺失即 SIGPIPE 杀宿主;`SendInput` 每键 ≥500ms 阻塞;仅单色文本快照。
+- **sandbox_wasm**:见 B2;另每 `Run()` 重建整个 VM(无实例缓存),meter 对无 global 段的合法 wasm 误拒。
+- **boundary**:~~见 B1;无锁并发从未跑 TSan;跨进程/网络 transport 不存在(仅 InProcess)~~ → **全部已补**:B1 已修(W13);无锁 `SpscRing`/`TripleBuffer` 上 **TSan CI job + 双线程压测**(W16,`test_boundary_concurrency`);**跨进程/UDP transport 已落地**(W15,`DatagramTransport` over `IDatagram` + 真 POSIX `UdpDatagram` + 序列化 `snapshot_codec`,丢包下镜像收敛);**服务器权威时钟**(W14,`SnapshotReceiver` 单调跟随 + `RenderClock` 不越权外推)。
+
+**仍 programmer-usable(干净/无崩溃),但非 artist-deliverable** 的 5 个仍有真实债:
+- **gameapi**:无正确性 bug;但 `QueryByTag`/`SenseRadius`/`SenseNearest` 是 O(N) 全世界扫无空间索引,每 host-call 平价 50 燃料、仅按次数限流 → **非对称 DoS**(F-1 仍 OPEN;实测 N=4 与 N=4000 同为 2754 燃料)。`SpawnEntities`/Comms 信号为声明未接的死面。
+- **asset**(除 B3):**假热重载**(注释称持柄透明拾取热重载,实际 cache-hit 只 AddRef 不重读、无 mtime/Reload → 返回陈旧数据);「content-hash ID」实为**名字串的 CRC64**;「依赖 manifest」运行时**无读取器**;材质编译是**硬编码 TestPBR stub**;位串行 CRC64 全量跑加载热路径(多 GB 包阻塞数秒)+ 每载双拷贝。
+- **sandbox RefVm**:每 `Run()` 堆分配并清零整个 arena(64KiB→16MiB 实测 0.67ms→181ms/run,100% 是 setup);真实游戏 `game/hackops/src/main.cpp:111` **仍用 `popen(python3)`**、不链接 `next_sandbox`(ADR-0008 要消灭的反模式);F-2 浮点确定性未用 `-ffp-contract=off` 编译期强制。
+- **level / vegetation**:库本身稳健、fail-closed、ASan 绿;但 C++-only 编写、无序列化/存盘(level)、UE5 端 mock、broadphase 全局半径永不收缩(vegetation)。
+
+**系统性性能债**:全引擎**零基准 / 零 profiling / 零大 N 测试**,性能结论建立在「正确性」上,最大实测规模玩具级(6–10 实体)对着声称的 10k–1M。最贵几处:gameapi F-1;RefVm/wasm3 每 Run 重建;asset 位串行 CRC64 + 双拷贝;boundary `BuildDelta` 每 tick 重建全量 `std::map`(10k 实体 @60Hz ≈ 60 万 alloc/free/秒,无脏集,打脸自己「稳态零分配」);默认 JSON 序列化 ~10× 内存膨胀、写慢 21×。
+
 ## P0 — 护城河核心(必须自研,要砸好钢)
 | 缺口 | 说明 | 状态 |
 |---|---|---|
 | **Game API**(能力域化 / 版本化 / 确定性) | 玩家代码 / AI agent / UE5 视图三者唯一契约;整个架构的中心 | ✅ **v1 落地**(`next_gameapi`,[ADR-0007](adr/0007-game-api-contract.md));随玩法持续演进 |
 | **玩家代码沙箱**(安全第一) | 宿主只暴露 Game API,燃料/内存限额、无逃逸;替换 `popen(python3)` 探针 | ✅ **落地**(`next_sandbox` + 参考 VM,[ADR-0008](adr/0008-player-code-sandbox.md));边界安全审计见 [sandbox-audit](security/sandbox-audit-2026-05-30.md)(39 项边界守住、ASan/UBSan 全清,1 中危发现 F-1);**玩家语言前端已落地**:现代 C++/Rust 编到 wasm32,经 `next_sandbox_wasm`(wasm3)运行,A*/二分查找在 headless 世界跑通([ADR-0011](adr/0011-wasm-language-frontend.md));**CPU 燃料也已落地**:加载期 gas 插桩让 WASM 模块自计费,无限循环 → `FuelExhausted`([ADR-0012](adr/0012-wasm-fuel-gas-metering.md)) |
 | **sim↔UE5 状态复制层** | headless 权威状态 → UE5 视图镜像;进程内起步、网络/服务器权威设计 | ✅ **进程内落地**(`next_boundary`,[ADR-0006](adr/0006-sim-ue5-boundary.md));**待补**:跨进程 / 网络 transport |
-| **物理**(权威/确定性/服务器侧) | `IPhysicsWorld` 抽象 + 确定性参考后端 + 射线 + ECS `PhysicsSystem`;Jolt 经 `BUILD_WITH_JOLT` 可选接入;意图→物理经 gameplay `ActuationSystem` 统一为单一 Transform 写者 | ✅ **落地**(`next_physics` + 可选 `next_physics_jolt` + `next_gameplay`,[ADR-0009](adr/0009-physics-jolt-backend.md)/[ADR-0010](adr/0010-actuation-single-transform-writer.md));**待补**:Jolt 跨平台确定性、dynamic 受力角色控制 |
+| **物理**(权威/确定性/服务器侧) | `IPhysicsWorld` 抽象 + 确定性参考后端 + 射线 + ECS `PhysicsSystem`;Jolt 经 `BUILD_WITH_JOLT` 可选接入;意图→物理经 gameplay `ActuationSystem` 统一为单一 Transform 写者 | ✅ **落地**(`next_physics` + 可选 `next_physics_jolt` + `next_gameplay`,[ADR-0009](adr/0009-physics-jolt-backend.md)/[ADR-0010](adr/0010-actuation-single-transform-writer.md));**已补**(ADR-0015,两后端):`AddForce`/`AddImpulse` 施力底座 + `AddTorque`/`AddForceAtPosition`/`GetAngularVelocity` 角动力学(reference 对角惯量 + 四元数角积分)——水体多点浮力 / **船只自扶正**在用;**待补**:Jolt 跨平台确定性、精确世界惯量张量、把受力控制接到玩家角色操控 |
 | **headless 世界规则/状态接线** | 任务条件/动作接真实世界状态;世界状态可查询/可回放 | 部分(Game API 的 `Tasks`/意图 + `DefaultIntentResolver` 已起步);任务系统接线待续 |
 
 ## P1 — 重大
@@ -48,6 +75,18 @@
 - 流送↔自研渲染打通、Transform 世界矩阵供渲染、无 Linux 渲染后端 → **UE5**(流送的 sim 侧兴趣管理仍可复用)。
 - 内容创作工具(场景/材质编辑、FBX/PNG 导入、资产视口) → **UE5 编辑器**。
 - 自研物理 → **Jolt**。
+
+## 本轮已清偿(2026-06-05,水体工业化收口 + 边界网络化 + B1 修复)
+按 30-item 审计清单逐项落地,全部 build+test 绿、ASan/UBSan 清、clang-format 合规、入 CI(headless **49/49** ctest;Jolt 构建绿;boundary 跑 TSan;真 UDP 回环绿)。
+- **Phase 0 尾**:**W28** NWTR 线格 v1→v2 版本化 + 迁移(冻结布局 + static_assert 触发器 + `PackCellLegacyV1` 真迁移测试,未知版本 fail-closed);**W29** `WaterForceSystem`×`ActuationSystem` 组合测试(玩家驾船过池保持漂浮、单写者成立、系统序无关、确定性);**W4** 重放分歧诊断台(physics/water/actuation 三通道 FNV 校验和 + 定位最早分歧 tick+子系统,注入式验证);**W16** TSan 预设 + `test_boundary_concurrency` 双线程压测 SpscRing/TripleBuffer。
+- **Phase 1**:**W6** 把头条浮力场景跑在 **Jolt 后端**(阿基米德平衡、钳制阻力稳定、水流冲带、**箱体自扶正**——证明产品后端 Jolt 上船只物理正确);**W9** 波热路径 `CompiledWaves`(预提 k/ω,与内联**逐位一致**,船 4 角共用)+ 渲染用 `SampleHeightLOD`(非权威)+ 微基准。
+- **Phase 2 玩法**:**W10** 水查询入沙箱 ABI(`CallId::GetWaterState` Sense 域 + POD + `IWaterQuery`,门面/调度/**沙箱 guest** 三层测试,守 Sense 门 + fail-closed);**W11** 电子设备+导电水**短路**(`ElectronicComponent` + `WaterHazardSystem`,latched/边沿触发,含上涨洪水淹没定点设备);**W12** **游泳/溺水/氧气**(`SwimmerComponent` + `SwimSystem`,头没水耗氧→溺水→死亡 latched,涉水正常呼吸,确定性)。
+- **Phase 3 网络**:**W13** 修 **B1 BLOCKER**(见上);**W14** 服务器权威时钟(`SnapshotReceiver` 单调跟随 + `RenderClock` 不越权);**W15** 跨进程/UDP transport(`snapshot_codec` 扁平版本化 fail-closed + `DatagramTransport`/`IDatagram` + 真 POSIX `UdpDatagram`,丢包下镜像**收敛**——消费者每帧重发累计 ack 自愈)。
+- **Phase 4 UE5**:**W17–W21** 渲染契约(`MockWaterConsumer::EvaluateSurface` 仅凭流出字节重建权威波面 height+法线、亚毫米吻合、覆盖全类型+时间+跨 cell;作者管线 WaterBuilder/`.water`/`assetc` 本就完备)+ `docs/design/ue5-water-contract.md`(数据通路 + UE5 端职责 + 诚实的「仓内已证 vs UE5 仓外」表)。渲染/材质/编辑器 UI 仍属 UE5(ADR-0005),`MockWaterConsumer` 是 headless 参考+完备性证明,非渲染器。
+- **诚实残留**:UE5 实际 GPU 出图/材质/编辑器 UI 仍仓外;箱-任意倾斜面体积仍近似;弯河=多 AABB 段;Flood=时间水位非体积解。
+
+## 本轮已清偿(2026-06-04,水体系统 engine/water + engine/water_world)
+- **水体系统**([ADR-0015](adr/0015-water-system.md),`next_water` + `next_water_world`):**超越植被的真实每帧力仿真**(用户诉求"把水彻底做到可交付")。纯核心:`det_trig` 确定性 sin/cos(跨构建逐位重放,波是热路径上的权威量)+ Gerstner 波面(buoyancy 用快速垂直和、点查询用定点反演精确高度、解析法线)+ 球缺/箱体**解析淹没体积**(水面/容器底双向裁剪)+ 阿基米德浮力 + **速度钳制阻力**(Jolt `ApplyBuoyancyImpulse` 配方:`k=clamp(rate·dt,0,1)`,显式固定步无条件稳定,无"软木塞从水里弹射")+ 风驱波频谱(深水色散 + 陡度预算)+ **总陡度≤1** 的 fail-closed 校验 + `NWTR` cell。**物理施力扩展**:给 `IPhysicsWorld` 加 `AddForce`/`AddImpulse`(reference 半隐式累加器 + Jolt `BodyInterface`,两后端,trunk 仍 Jolt 无关)。world 集成:`WaterStore`(按 bodyId 跨 cell 去重 + broadphase + **无限海洋全局特例**避免网格爆炸)、`WaterCook` + `assetc water` 子命令、`WaterWorldQuery : IWorldQuery`(水面复合进既有 Sense raycast,零 ABI 改动)+ 潜水隐蔽(stealth)/导电电击(hacking)游戏钩子、`WaterForceSystem`(注册在 PhysicsSystem 前、只施力不写 Transform → 单写者不变量成立)、`WaterStreamingSystem.Sync`(generation 感知)、`MockWaterConsumer` + splash/exit 事件。**端到端纵切面 `WaterSliceTest`**(cook→真实 IO 流送→Sync→World 物理浮起→splash→复合射线→卸载)+ **600 变密度浮体 × 3000 帧全部沉降到 `V_sub/V_tot=ρ_body/ρ`(<2%)且无弹射** + 规模重放状态哈希 + 对抗 fuzz,**57 测试 + ASan/UBSan 全绿、已入 CI**。**诚实残留**:UE5 端 mock(只证字节契约,非渲染一致);无力矩/自扶正与箱-任意倾斜面体积(Scardovelli-Zaleski,推迟到 P2/Jolt);河流为 AABB 走廊(弯曲河=多段);Flood 为时间驱动水位(非体积求解);游泳/溺水/氧气、水+电短路结算、AI 水体分类等下游 gameplay 消费者待接(本系统已备好其权威状态/查询/事件)。
 
 ## 本轮已清偿(2026-05-30,关卡设计系统 engine/level)
 - **数据驱动关卡系统**([ADR-0013](adr/0013-level-design-system.md),`next_level`):`LevelDef`(实体/组件/标签/目标/胜负条件,纯数据)+ 流式 `LevelBuilder` + **总校验门** `LevelValidator`(fail-closed,累计全部错误,~32 缺陷码)+ **事务化确定性** `LevelLoader`(校验通过才建,失败 World 不动;向量序 + std::map/set 确定)+ 只读 loss-priority `WinEvaluator`。复用 ECS + gameapi/physics/boundary 组件,**不碰**遗留 Task System。

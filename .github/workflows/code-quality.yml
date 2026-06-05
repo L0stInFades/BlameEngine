@@ -41,17 +41,60 @@ jobs:
           cmake --build out/build/asan -j3 --target
           test_foundation test_jobsystem test_runtime test_world_streaming
           test_asset_compiler test_task_system test_script_system
-          test_gameapi test_sandbox test_boundary test_vertical_slice test_physics test_actuation
+          test_gameapi test_sandbox test_boundary test_boundary_concurrency test_boundary_reliability
+          test_boundary_transport test_boundary_udp test_vertical_slice
+          test_physics test_actuation
           test_physics_slice test_level test_vegetation test_layered_cell test_vegetation_cook
           test_vegetation_streaming test_vegetation_store test_vegetation_query test_vegetation_view
           test_vegetation_slice
+          test_water test_water_cook test_water_store test_water_view test_water_buoyancy
+          test_water_query test_water_streaming test_water_slice test_water_scale test_water_fuzz
+          test_water_actuation test_water_replay test_water_hazard test_water_swim test_water_render
       - name: Run tests under sanitizers
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: >
           ctest --test-dir out/build/asan --output-on-failure
-          -R "FoundationTest|JobSystemTest|RuntimeTest|WorldStreamingTest|AssetCompilerTest|TaskSystemTest|ScriptSystemTest|GameApiTest|SandboxTest|BoundaryTest|VerticalSliceTest|PhysicsTest|ActuationTest|PhysicsSliceTest|LevelTest|VegetationTest|LayeredCellTest|VegetationCookTest|VegetationStreamingTest|VegetationStoreTest|VegetationQueryTest|VegetationViewTest|VegetationSliceTest"
+          -R "FoundationTest|JobSystemTest|RuntimeTest|WorldStreamingTest|AssetCompilerTest|TaskSystemTest|ScriptSystemTest|GameApiTest|SandboxTest|BoundaryTest|BoundaryConcurrencyTest|BoundaryReliabilityTest|BoundaryTransportTest|BoundaryUdpTest|VerticalSliceTest|PhysicsTest|ActuationTest|PhysicsSliceTest|LevelTest|VegetationTest|LayeredCellTest|VegetationCookTest|VegetationStreamingTest|VegetationStoreTest|VegetationQueryTest|VegetationViewTest|VegetationSliceTest|WaterTest|WaterCookTest|WaterStoreTest|WaterViewTest|WaterBuoyancyTest|WaterQueryTest|WaterStreamingTest|WaterSliceTest|WaterScaleTest|WaterFuzzTest|WaterActuationTest|WaterReplayTest|WaterHazardTest|WaterSwimTest|WaterRenderTest"
+
+  # Cross-platform determinism gate (ADR-0015 W3): build + run the deterministic sim tests on Linux/
+  # x86_64 too (the sanitizers job above is macOS/arm64). With the engine-wide deterministic-FP flags,
+  # the replay/equilibrium tests passing on a SECOND platform guards the server-authoritative red line.
+  determinism:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (headless)
+        run: cmake --preset headless
+      - name: Build determinism-sensitive sim tests
+        run: >
+          cmake --build out/build/headless -j3 --target
+          test_physics test_water test_water_buoyancy test_water_scale test_water_slice
+          test_water_actuation test_water_replay
+      - name: Run determinism + buoyancy + physics tests
+        run: >
+          ctest --test-dir out/build/headless --output-on-failure
+          -R "PhysicsTest|WaterTest|WaterBuoyancyTest|WaterScaleTest|WaterSliceTest|WaterActuationTest|WaterReplayTest"
+
+  # ThreadSanitizer gate (W16): the sim<->UE5 boundary is the only lock-free concurrency in the engine.
+  # Build + run the two-thread producer/consumer stress for SpscRing + TripleBuffer under TSan so a
+  # broken acquire/release ordering (a real data race on the slot memory) fails the build, not just a
+  # rare production heisenbug. Closes the TECH_DEBT P2 item (lock-free structures never ran under TSan).
+  tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (ThreadSanitizer)
+        run: cmake --preset tsan
+      - name: Build lock-free boundary tests
+        run: cmake --build out/build/tsan -j3 --target test_boundary test_boundary_concurrency
+      - name: Run boundary tests under TSan
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: >
+          ctest --test-dir out/build/tsan --output-on-failure
+          -R "BoundaryTest|BoundaryConcurrencyTest"
 
   # Static analysis with cppcheck (advisory: surfaces issues without blocking the build).
   cppcheck:

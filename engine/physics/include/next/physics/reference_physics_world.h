@@ -26,6 +26,12 @@ public:
     void SetPosition(BodyId id, const float p[3]) override;
     void GetTransform(BodyId id, float outPos[3], float outRot[4]) const override;
 
+    void AddForce(BodyId id, const float force[3]) override;
+    void AddImpulse(BodyId id, const float impulse[3]) override;
+    void AddTorque(BodyId id, const float torque[3]) override;
+    void AddForceAtPosition(BodyId id, const float force[3], const float worldPoint[3]) override;
+    void GetAngularVelocity(BodyId id, float outAngular[3]) const override;
+
     RaycastResult Raycast(const float origin[3], const float direction[3], float maxDistance) const override;
 
     void Step(float dt) override;
@@ -39,11 +45,18 @@ private:
         float position[3];
         float velocity[3];
         float rotation[4];
+        float force[3];            // world-space force accumulator for the next Step; applied then cleared
+        float angularVelocity[3];  // rad/s, world axes
+        float torque[3];           // world-space torque accumulator for the next Step; applied then cleared
+        float invInertia[3];       // diagonal inverse inertia (body ~ world for this stand-in)
     };
 
     // Resolve a dynamic body against one static body (AABB push-out + restitution on the contact
     // axis). No-op when separated.
     void ResolveAgainstStatic(Body& dynamicBody, const Body& staticBody) const;
+
+    // Integrate the orientation quaternion from the body's angular velocity over dt (then renormalize).
+    static void IntegrateOrientation(Body& body, float dt);
 
     PhysicsConfig config_;
     std::map<BodyId, Body> bodies_;

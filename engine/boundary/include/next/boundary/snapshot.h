@@ -19,13 +19,22 @@ constexpr EntityId kInvalidEntity = 0;
 // it — it only forwards the id the game assigned.
 using VisualStateId = uint32_t;
 
+// Snapshot sequence number = monotonic per publisher. A snapshot is a DELTA against the snapshot
+// whose sequence is `baselineSequence`; `kNoBaseline` marks a KEYFRAME (full state, no baseline) the
+// consumer applies after a reset/resync. The delta-against-acknowledged-baseline + keyframe protocol
+// is what keeps the UE5 mirror correct when the (frame-dropping) transport drops snapshots (B1 fix).
+using SnapshotSequence = uint64_t;
+constexpr SnapshotSequence kNoBaseline = 0;
+
 // Quantized transform (bandwidth-friendly; matters once this goes over the wire). Position stays
 // float for precision near the camera; rotation is a 16-bit-per-component quaternion; scale is a
 // single quantized uniform factor.
 struct TransformPacked {
     float pos[3];
-    int16_t rotQuat[4];  // each component * 32767, clamped to [-1, 1]
-    uint16_t scale;      // uniform scale * kScaleQuant, clamped
+    int16_t rotQuat[4];     // each component * 32767, clamped to [-1, 1]
+    uint16_t scale;         // uniform scale * kScaleQuant, clamped
+    uint16_t reserved = 0;  // makes the 2 trailing pad bytes an EXPLICIT zeroed field, so the wire image
+                            // is deterministic (no indeterminate padding) and leaks no stale memory
 };
 
 constexpr float kRotQuant = 32767.0f;
@@ -47,15 +56,25 @@ struct RenderableComponent {
     uint32_t animState = 0;
 };
 
+// The render state of one entity, as the publisher baseline tracks it and the consumer mirror holds
+// it. Shared so a SnapshotReceiver's mirror is directly comparable to the publisher's view.
+struct EntityRenderState {
+    VisualStateId visual = 0;
+    uint32_t animState = 0;
+    TransformPacked xform{};
+};
+
 struct SpawnRecord {
     EntityId id;
     VisualStateId visual;
     TransformPacked xform;
+    uint32_t animState;  // fills SpawnRecord's trailing pad (sizeof stays 40) so a keyframe carries it
 };
 struct UpdateRecord {
     EntityId id;
     TransformPacked xform;
     uint32_t animState;
+    uint32_t reserved = 0;  // explicit zeroed trailing pad -> deterministic wire image, no memory leak
 };
 
 // A one-shot cosmetic trigger (sim→UE5): VFX/audio cue, carries no authority.
@@ -77,6 +96,8 @@ struct InputCmd {
 static_assert(sizeof(TransformPacked) == 24, "TransformPacked host layout drift");
 static_assert(sizeof(SpawnRecord) == 40, "SpawnRecord host layout drift");
 static_assert(sizeof(UpdateRecord) == 40, "UpdateRecord host layout drift");
+static_assert(sizeof(GameEvent) == 32, "GameEvent host layout drift");
+static_assert(sizeof(InputCmd) == 20, "InputCmd host layout drift");
 
 // One tick's render-view delta. In-process this uses SoA vectors (capacity is reused across
 // frames, so the steady state is allocation-free); the wire form packs the same records
@@ -89,6 +110,8 @@ static_assert(sizeof(UpdateRecord) == 40, "UpdateRecord host layout drift");
 struct SnapshotBlock {
     uint64_t tick = 0;
     double simTimeSeconds = 0.0;
+    SnapshotSequence sequence = 0;                    // this snapshot's monotonic id
+    SnapshotSequence baselineSequence = kNoBaseline;  // the seq this delta is against; kNoBaseline = keyframe
     std::vector<SpawnRecord> spawns;
     std::vector<UpdateRecord> updates;
     std::vector<EntityId> despawns;
@@ -96,10 +119,13 @@ struct SnapshotBlock {
     void Reset(uint64_t t, double seconds) {
         tick = t;
         simTimeSeconds = seconds;
+        sequence = 0;
+        baselineSequence = kNoBaseline;
         spawns.clear();
         updates.clear();
         despawns.clear();
     }
+    bool IsKeyframe() const { return baselineSequence == kNoBaseline; }
     size_t RecordCount() const { return spawns.size() + updates.size() + despawns.size(); }
 };
 

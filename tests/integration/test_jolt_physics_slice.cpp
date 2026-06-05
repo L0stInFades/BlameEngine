@@ -165,13 +165,14 @@ TEST(JoltPhysicsSlice, GuestDrivesPhysicsBodyToObjectiveAndStreams) {
             if (u.id == agentId)
                 sawAgentUpdate = true;
         }
+        publisher.Acknowledge(snap->sequence);  // lossless consumer acks -> deltas compress to updates
     }
 
     // The guest, speaking only the Game API, drove its Jolt-backed physics body to the objective.
     const TransformComponent* t = world.GetComponent<TransformComponent>(agent);
     ASSERT_NE(t, nullptr);
     EXPECT_NEAR(t->position[0], 10.0f, 1e-3f);
-    EXPECT_TRUE(sawAgentUpdate);  // physics-driven motion reached the UE5 view stream
+    EXPECT_TRUE(sawAgentUpdate);          // physics-driven motion reached the UE5 view stream
     EXPECT_EQ(physics->BodyCount(), 2u);  // floor + agent; both alive
 }
 
