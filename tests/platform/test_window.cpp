@@ -2,10 +2,62 @@
 #include "next/foundation/logger.h"
 #include <gtest/gtest.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#ifdef CreateWindow
+#undef CreateWindow
+#endif
+#endif
+
 namespace Next {
 namespace testing {
 
 using ::testing::Test;
+
+#ifdef _WIN32
+namespace {
+
+bool RequestedClientSizeFitsMonitor(Window& window, int width, int height) {
+    auto* hwnd = static_cast<HWND>(window.GetNativeHandle());
+    if (!hwnd) {
+        return false;
+    }
+
+    MONITORINFO monitorInfo = {};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!GetMonitorInfoA(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &monitorInfo)) {
+        return true;
+    }
+
+    RECT outer = {0, 0, width, height};
+    const DWORD style = static_cast<DWORD>(GetWindowLongPtrA(hwnd, GWL_STYLE));
+    const DWORD exStyle = static_cast<DWORD>(GetWindowLongPtrA(hwnd, GWL_EXSTYLE));
+
+    bool adjusted = false;
+    if (HMODULE user32 = GetModuleHandleA("user32.dll")) {
+        using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
+        using AdjustWindowRectExForDpiFn = BOOL(WINAPI*)(LPRECT, DWORD, BOOL, DWORD, UINT);
+        auto* getDpiForWindow = reinterpret_cast<GetDpiForWindowFn>(GetProcAddress(user32, "GetDpiForWindow"));
+        auto* adjustForDpi =
+            reinterpret_cast<AdjustWindowRectExForDpiFn>(GetProcAddress(user32, "AdjustWindowRectExForDpi"));
+        if (getDpiForWindow && adjustForDpi) {
+            adjusted = adjustForDpi(&outer, style, FALSE, exStyle, getDpiForWindow(hwnd)) != FALSE;
+        }
+    }
+
+    if (!adjusted) {
+        AdjustWindowRectEx(&outer, style, FALSE, exStyle);
+    }
+
+    const int requestedOuterWidth = outer.right - outer.left;
+    const int requestedOuterHeight = outer.bottom - outer.top;
+    const int workWidth = monitorInfo.rcWork.right - monitorInfo.rcWork.left;
+    const int workHeight = monitorInfo.rcWork.bottom - monitorInfo.rcWork.top;
+    return requestedOuterWidth <= workWidth && requestedOuterHeight <= workHeight;
+}
+
+} // namespace
+#endif
 
 class WindowTest : public Test {
 protected:
@@ -280,8 +332,20 @@ TEST_F(WindowTest, LargeWindowSize) {
     bool success = window->Initialize(desc);
 
     EXPECT_TRUE(success);
+#ifdef _WIN32
+    if (RequestedClientSizeFitsMonitor(*window, desc.width, desc.height)) {
+        EXPECT_EQ(window->GetWidth(), 1920);
+        EXPECT_EQ(window->GetHeight(), 1080);
+    } else {
+        EXPECT_GT(window->GetWidth(), 0);
+        EXPECT_GT(window->GetHeight(), 0);
+        EXPECT_LE(window->GetWidth(), 1920);
+        EXPECT_LE(window->GetHeight(), 1080);
+    }
+#else
     EXPECT_EQ(window->GetWidth(), 1920);
     EXPECT_EQ(window->GetHeight(), 1080);
+#endif
 
     window->Shutdown();
     delete window;

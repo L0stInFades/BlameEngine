@@ -27,6 +27,19 @@
       }
     },
     {
+      "name": "windows-headless",
+      "displayName": "Windows headless core (MSVC + Ninja)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/windows-headless",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "BUILD_TOOLS": "ON",
+        "BUILD_GAME_HACKOPS": "OFF",
+        "BUILD_TESTS": "ON",
+        "BUILD_TERMINAL": "OFF"
+      }
+    },
+    {
       "name": "asan",
       "displayName": "ASan + UBSan test build (macOS/Linux)",
       "generator": "Unix Makefiles",
@@ -54,6 +67,10 @@
     {
       "name": "headless",
       "configurePreset": "headless"
+    },
+    {
+      "name": "windows-headless",
+      "configurePreset": "windows-headless"
     },
     {
       "name": "asan",

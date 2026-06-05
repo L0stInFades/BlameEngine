@@ -37,7 +37,8 @@ cd NEXT
 | 预设 | 用途 | 平台 |
 |---|---|---|
 | `terminal-dev` | 终端/HackOps 技术线;最快、构建 demo+工具,不含测试 | macOS / Linux / Windows |
-| `headless` | headless 核心库 + 工具 + 测试(RelWithDebInfo) | macOS / Linux / Windows |
+| `headless` | headless 核心库 + 工具 + 测试(RelWithDebInfo) | macOS / Linux |
+| `windows-headless` | headless 核心库 + 工具 + 测试(RelWithDebInfo, MSVC + Ninja) | Windows |
 | `asan` | ASan+UBSan 测试构建(**主要正确性闸门**) | macOS / Linux |
 
 ```bash
@@ -51,6 +52,11 @@ cmake --build --preset terminal-dev
 cmake --preset asan
 cmake --build out/build/asan -j
 ctest --test-dir out/build/asan --output-on-failure
+
+# Windows
+cmake --preset windows-headless
+cmake --build --preset windows-headless
+ctest --test-dir out/build/windows-headless --output-on-failure
 ```
 
 应看到 10 个套件 100% 通过(Foundation / 序列化 / Job / ECS / 资产 / 平台 / 数学 / 流送 / 任务 / 脚本),且无 ASan/UBSan 报错。
