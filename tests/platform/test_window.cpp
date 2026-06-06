@@ -56,7 +56,7 @@ bool RequestedClientSizeFitsMonitor(Window& window, int width, int height) {
     return requestedOuterWidth <= workWidth && requestedOuterHeight <= workHeight;
 }
 
-} // namespace
+}  // namespace
 #endif
 
 class WindowTest : public Test {
