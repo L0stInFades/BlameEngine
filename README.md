@@ -90,13 +90,18 @@ cmake --preset asan
 cmake --build out/build/asan -j
 ctest --test-dir out/build/asan --output-on-failure
 
+# Windows headless 测试(MSVC + Ninja)
+cmake --preset windows-headless
+cmake --build --preset windows-headless
+ctest --test-dir out/build/windows-headless --output-on-failure
+
 # 跑 headless demo(无需画面)
 out/build/terminal-dev/bin/hackops_demo \
   --policy tools/nvim_surface_probe/sample_policy.py \
   --snapshot /tmp/hackops-policy-snapshot.txt
 ```
 
-预设:`terminal-dev`(终端线) · `headless`(核心库 + 工具 + 测试) · `asan`(测试闸门)。
+预设:`terminal-dev`(终端线) · `headless`(核心库 + 工具 + 测试) · `windows-headless`(Windows MSVC + Ninja) · `asan`(测试闸门)。
 测试套件(10,全绿):Foundation · Serialization · JobSystem · Runtime(ECS) · AssetCompiler · Platform · Math · WorldStreaming · Task · Script。
 完整步骤见 [`GETTING_STARTED.md`](GETTING_STARTED.md)。
 
