@@ -79,6 +79,49 @@ TEST(GameApiCapabilities, MissingCapabilityIsDenied) {
     EXPECT_EQ(api.HostCallsThisTick(), 0u);
 }
 
+TEST(GameApiRateLimit, WorldScanQuotaBoundsONScans) {
+    // F-1 fix: the O(N) world scans (QueryByTag / SenseRadius / SenseNearest) share a dedicated,
+    // tighter per-tick quota — a guest cannot turn flat-priced host-calls into unbounded host work.
+    Fixture f;
+    f.SpawnTagged(1.0f, 0.0f, 0.0f, 3);
+
+    GameApiConfig cfg;
+    cfg.world = &f.world;
+    cfg.clock = &f.clock;
+    cfg.objectives = &f.objectives;
+    cfg.self = ToEntityId(f.agent);
+    cfg.capabilities = CapabilitySet::PlayerDefault();
+    cfg.maxWorldScansPerTick = 2;
+    GameApi api(cfg);
+    api.BeginTick();
+
+    EntityId ids[8];
+    uint32_t count = 0;
+    EXPECT_EQ(api.SenseRadius(10.0f, ids, 8, count), Status::Ok);  // scan 1
+    EXPECT_EQ(api.QueryByTag(3, ids, 8, count), Status::Ok);       // scan 2
+    EXPECT_EQ(api.WorldScansThisTick(), 2u);
+
+    // Quota spent: every further scan is RateLimited and does no host work...
+    EntityId nearest = kInvalidEntity;
+    float distance = 0.0f;
+    EXPECT_EQ(api.SenseNearest(10.0f, 3, nearest, distance), Status::RateLimited);
+    EXPECT_EQ(api.SenseRadius(10.0f, ids, 8, count), Status::RateLimited);
+    EXPECT_EQ(api.WorldScansThisTick(), 2u);
+
+    // ...while non-scan calls still proceed (only the scan quota is exhausted).
+    EntityId self = kInvalidEntity;
+    EXPECT_EQ(api.GetSelf(self), Status::Ok);
+
+    // BeginTick resets the quota with the other per-tick counters.
+    api.BeginTick();
+    EXPECT_EQ(api.SenseRadius(10.0f, ids, 8, count), Status::Ok);
+    EXPECT_EQ(api.WorldScansThisTick(), 1u);
+
+    // An invalid call is rejected BEFORE the quota is charged.
+    EXPECT_EQ(api.SenseRadius(-1.0f, ids, 8, count), Status::InvalidArgument);
+    EXPECT_EQ(api.WorldScansThisTick(), 1u);
+}
+
 TEST(GameApiCapabilities, GrantedCapabilityAllows) {
     Fixture f;
     GameApi api = f.MakeApi(CapabilitySet::PlayerDefault());

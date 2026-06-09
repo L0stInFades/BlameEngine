@@ -41,12 +41,14 @@ GameApi::GameApi(const GameApiConfig& config)
       maxHostCallsPerTick_(config.maxHostCallsPerTick),
       maxCommsPerTick_(config.maxCommsPerTick),
       maxLogsPerTick_(config.maxLogsPerTick),
+      maxWorldScansPerTick_(config.maxWorldScansPerTick),
       logRingCapacity_(config.logRingCapacity) {}
 
 void GameApi::BeginTick() {
     hostCallsThisTick_ = 0;
     commsThisTick_ = 0;
     logsThisTick_ = 0;
+    scansThisTick_ = 0;
 }
 
 bool GameApi::ChargeHostCall() {
@@ -64,6 +66,17 @@ Status GameApi::Enter(Capability c) {
     if (!ChargeHostCall()) {
         return Status::RateLimited;
     }
+    return Status::Ok;
+}
+
+// F-1 fix: charge one O(N) world scan against the per-tick scan quota. Called by QueryByTag /
+// SenseRadius / SenseNearest AFTER argument validation and BEFORE the scan, so an invalid call
+// never spends scan budget and a quota-exhausted call never does host work.
+Status GameApi::ChargeWorldScan() {
+    if (scansThisTick_ >= maxWorldScansPerTick_) {
+        return Status::RateLimited;
+    }
+    ++scansThisTick_;
     return Status::Ok;
 }
 
@@ -137,6 +150,8 @@ Status GameApi::QueryByTag(uint32_t tag, EntityId* outIds, uint32_t capacity, ui
         return Status::InvalidArgument;
     if (capacity > 0 && outIds == nullptr)
         return Status::InvalidArgument;
+    if (Status s = ChargeWorldScan(); s != Status::Ok)
+        return s;
 
     std::vector<EntityId> hits;
     world_->Each<GameTag>([&](Entity e, const GameTag& g) {
@@ -157,6 +172,8 @@ Status GameApi::SenseRadius(float radius, EntityId* outIds, uint32_t capacity, u
         return Status::InvalidArgument;
     if (capacity > 0 && outIds == nullptr)
         return Status::InvalidArgument;
+    if (Status s = ChargeWorldScan(); s != Status::Ok)
+        return s;
 
     const TransformComponent* selfT = world_->GetComponent<TransformComponent>(ToEntity(self_));
     if (selfT == nullptr)
@@ -183,6 +200,8 @@ Status GameApi::SenseNearest(float radius, uint32_t tag, EntityId& outEntity, fl
         return s;
     if (!IsFinite(radius) || radius < 0.0f || tag > kMaxTagIndex)
         return Status::InvalidArgument;
+    if (Status s = ChargeWorldScan(); s != Status::Ok)
+        return s;
 
     const TransformComponent* selfT = world_->GetComponent<TransformComponent>(ToEntity(self_));
     if (selfT == nullptr)
