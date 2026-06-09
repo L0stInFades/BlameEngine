@@ -7,6 +7,15 @@ on:
       - "hackops/**"
   pull_request:
 
+# These jobs only read the checkout; drop the default write token.
+permissions:
+  contents: read
+
+# A new push to a PR supersedes the in-flight run; pushes to master always run to completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   terminal-dev:
     strategy:
@@ -16,6 +25,7 @@ jobs:
           - ubuntu-latest
           - macos-latest
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v6

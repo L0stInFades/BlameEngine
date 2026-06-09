@@ -8,13 +8,23 @@ on:
       - "rendering/**"
   pull_request:
 
+# These jobs only read the checkout; drop the default write token.
+permissions:
+  contents: read
+
+# A new push to a PR supersedes the in-flight run; pushes to master always run to completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Enforce .clang-format on the files a change touches (legacy code is grandfathered;
   # touch a file -> it must be formatted). Run scripts/clang_format.sh locally to fix.
   format:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Install clang-format
@@ -32,8 +42,9 @@ jobs:
   # This closes two gaps: CI previously never ran ctest, and never ran under sanitizers.
   sanitizers:
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure (ASan + UBSan)
         run: cmake --preset asan
       - name: Build core test suites
@@ -63,8 +74,9 @@ jobs:
   # the replay/equilibrium tests passing on a SECOND platform guards the server-authoritative red line.
   determinism:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure (headless)
         run: cmake --preset headless
       - name: Build determinism-sensitive sim tests
@@ -83,8 +95,9 @@ jobs:
   # rare production heisenbug. Closes the TECH_DEBT P2 item (lock-free structures never ran under TSan).
   tsan:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure (ThreadSanitizer)
         run: cmake --preset tsan
       - name: Build lock-free boundary tests
@@ -102,8 +115,9 @@ jobs:
   # the reference sandbox suite under ASan + UBSan.
   wasm-sanitizers:
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure (ASan + UBSan + WASM backend)
         run: cmake --preset asan -DBUILD_WITH_WASM=ON
       - name: Build sandbox test suites
@@ -120,10 +134,26 @@ jobs:
   # suite, so the Windows build fix is protected by CI instead of bitrotting again.
   windows-headless:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      # MSVC env comes from Microsoft's own DevShell module that ships with Visual Studio on the
+      # runner image — not from ilammy/msvc-dev-cmd@v1, which is unmaintained (Node 20, deprecated
+      # by GitHub on 2026-06-16). vswhere picks the newest installed toolset, so this also rides
+      # the windows-latest VS2022 -> VS2026 image migration without changes. Only the env vars the
+      # dev shell adds or changes are persisted to $GITHUB_ENV for the cmake/ctest steps below.
       - name: Set up MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsPath) { throw 'vswhere found no Visual Studio install with the C++ toolset' }
+          $before = @{}
+          Get-ChildItem env: | ForEach-Object { $before[$_.Name] = $_.Value }
+          Import-Module (Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64 -no_logo'
+          Get-ChildItem env: | Where-Object { $before[$_.Name] -ne $_.Value } |
+            ForEach-Object { "$($_.Name)=$($_.Value)" } | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Configure (windows-headless)
         run: cmake --preset windows-headless
       - name: Build
@@ -134,8 +164,9 @@ jobs:
   # Static analysis with cppcheck (advisory: surfaces issues without blocking the build).
   cppcheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
       - name: Run cppcheck
