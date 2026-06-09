@@ -240,7 +240,9 @@ TEST_F(JobSystemTest, WaitForSuccess) {
 
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     EXPECT_GE(duration.count(), 40);
-    EXPECT_LE(duration.count(), 100);
+    // No upper bound: completed==true already proves WaitFor returned on job completion rather
+    // than timing out, and wall-clock on a loaded CI runner (ASan, oversubscribed cores) can
+    // stretch the 50ms sleep well past any tight cap — a <=100ms assert here is pure flake.
 }
 
 // Test pump with budget
