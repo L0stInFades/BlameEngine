@@ -370,6 +370,41 @@ TEST_F(AssetRuntimeLoadTest, MeshAssetViewExposesLoadedPayload) {
     AssetManager::Instance().UnloadPackage(packagePath_.stem().string());
 }
 
+TEST_F(AssetRuntimeLoadTest, MeshAssetViewSurvivesAssetUnload) {
+    // B3 regression: a view must keep the backing payload alive after the asset is fully
+    // released and its package unloaded. Without the keepAlive reference this read is a
+    // use-after-free (caught under ASan).
+    constexpr const char* kAssetName = "TinyMeshUnload";
+    const std::vector<uint8_t> payload = MakeMinimalMeshPayload();
+
+    packagePath_ = MakeTempPackagePath("asset_mesh_view_survives_unload");
+    ASSERT_TRUE(WriteMeshPackageWithPayload(packagePath_, kAssetName, 1, 1, 12, 0, 1, payload.data(), payload.size()));
+    ASSERT_TRUE(AssetManager::Instance().LoadPackage(packagePath_.string()));
+
+    const std::string qualifiedName = packagePath_.stem().string() + "::" + kAssetName;
+    AssetHandle handle = AssetManager::Instance().LoadAssetSync(qualifiedName);
+    ASSERT_TRUE(handle.IsValid());
+
+    MeshAssetView meshView;
+    ASSERT_TRUE(AssetManager::Instance().GetMeshAssetView(handle, meshView));
+    ASSERT_NE(meshView.payload, nullptr);
+    ASSERT_EQ(meshView.payloadBytes, payload.size());
+
+    // Drop the last reference and unload the package: the manager forgets the asset entirely.
+    AssetManager::Instance().Release(handle);
+    AssetManager::Instance().UnloadPackage(packagePath_.stem().string());
+    EXPECT_FALSE(AssetManager::Instance().GetAssetHandle(qualifiedName).IsValid());
+
+    // The view (sole owner now) must still read the original bytes.
+    EXPECT_EQ(std::memcmp(meshView.payload, payload.data(), payload.size()), 0);
+    EXPECT_EQ(meshView.header.vertexCount, 1u);
+
+    // A copy of the view shares ownership the same way.
+    MeshAssetView copy = meshView;
+    meshView = MeshAssetView{};
+    EXPECT_EQ(std::memcmp(copy.payload, payload.data(), payload.size()), 0);
+}
+
 TEST_F(AssetRuntimeLoadTest, MeshLoadRejectsPayloadSmallerThanDeclaredLayout) {
     constexpr const char* kAssetName = "ShortMesh";
     const std::vector<uint8_t> payload = MakeMinimalMeshPayload();
