@@ -96,6 +96,41 @@ jobs:
           ctest --test-dir out/build/tsan --output-on-failure
           -R "BoundaryTest|BoundaryConcurrencyTest"
 
+  # WASM backend under sanitizers (B2 follow-up): the optional wasm3 backend used to sit entirely
+  # outside the ASan gate ("the completeness gate has holes"). This job builds BUILD_WITH_WASM=ON
+  # and runs the WASM security-contract suite (hand-encoded guests, no wasm toolchain needed) plus
+  # the reference sandbox suite under ASan + UBSan.
+  wasm-sanitizers:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (ASan + UBSan + WASM backend)
+        run: cmake --preset asan -DBUILD_WITH_WASM=ON
+      - name: Build sandbox test suites
+        run: cmake --build out/build/asan -j3 --target test_sandbox test_sandbox_wasm
+      - name: Run sandbox tests under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >
+          ctest --test-dir out/build/asan --output-on-failure
+          -R "SandboxTest|WasmSandboxTest"
+
+  # Windows headless gate: build the windows-headless preset (MSVC + Ninja) and run the full ctest
+  # suite, so the Windows build fix is protected by CI instead of bitrotting again.
+  windows-headless:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure (windows-headless)
+        run: cmake --preset windows-headless
+      - name: Build
+        run: cmake --build --preset windows-headless
+      - name: Run tests
+        run: ctest --test-dir out/build/windows-headless --output-on-failure
+
   # Static analysis with cppcheck (advisory: surfaces issues without blocking the build).
   cppcheck:
     runs-on: ubuntu-latest
