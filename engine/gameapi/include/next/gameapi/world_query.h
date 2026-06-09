@@ -17,4 +17,16 @@ struct IWorldQuery {
     virtual RaycastResult Raycast(const float origin[3], const float direction[3], float maxDistance) = 0;
 };
 
+// Abstract WATER-state query surface (ADR-0015 W10). Like IWorldQuery it is engine-free: gameapi defines
+// the contract and the water layer (WaterWorldQuery) implements it over the authoritative WaterStore.
+// The GameApi facade holds an optional IWaterQuery* and the Sense-gated GetWaterState call delegates to
+// it (Unsupported when none is wired), so player code can read submersion/flow/conductivity without
+// gameapi depending on engine/water.
+struct IWaterQuery {
+    virtual ~IWaterQuery() = default;
+
+    // Water state at a world point. inWater == 0 (and the rest zeroed) when no body governs that XZ.
+    virtual WaterStateResult QueryWater(const float point[3]) = 0;
+};
+
 }  // namespace Next::gameapi

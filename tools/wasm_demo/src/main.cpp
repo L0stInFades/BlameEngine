@@ -66,7 +66,9 @@ constexpr int kW = 8, kH = 8;
 
 sandbox::SandboxPolicy Policy() {
     sandbox::SandboxPolicy p;
-    p.memoryBytes = 64 * 1024;
+    // memoryBytes is ENFORCED by the wasm3 backend now (B2 fix): grant what the toolchain-built
+    // guests actually declare (clang/rust wasm32 defaults reserve up to ~1 MiB of stack + data).
+    p.memoryBytes = 4 * 1024 * 1024;
     p.stackSlots = 2048;
     p.maxHostCalls = 100000;
     p.capabilities = CapabilitySet::PlayerDefault();
@@ -262,7 +264,7 @@ void DemoFuel(const std::string& dir) {
             return false;
         }
         sandbox::SandboxPolicy p;
-        p.memoryBytes = 64 * 1024;
+        p.memoryBytes = 4 * 1024 * 1024;  // enforced (B2): cover the toolchain guests' declared memory
         p.stackSlots = 2048;
         p.maxHostCalls = 100000;
         p.capabilities = CapabilitySet::PlayerDefault();

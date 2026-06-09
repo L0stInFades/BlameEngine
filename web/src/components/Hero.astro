@@ -1,0 +1,142 @@
+---
+import { Icon } from 'astro-icon/components'
+
+const tickerItems = [
+  'HEADLESS WORLD', 'WASM SANDBOX', 'CAPABILITY DOMAINS', 'WRITE AS INTENT',
+  'TRIPLE BUFFER', 'SNAPSHOT INTERPOLATION', 'NVIM --EMBED', 'MSGPACK-RPC',
+  'EXT_LINEGRID', 'WASM3 FUEL', 'NO AMBIENT AUTHORITY', 'JOLT BACKEND',
+  'SERVER-AUTHORITATIVE', 'REAL CODE', 'WORK-STEALING JOBS',
+]
+---
+
+<section class="hero" id="top">
+  <div class="hero__vignette" aria-hidden="true"></div>
+
+  <div class="hero__inner">
+    <div class="hero__kicker">
+      <span class="dot"></span>
+      <span>创造现实的伟力，撰写代码的纯粹 / THE CLARITY OF CODE. THE SCALE OF REALITY.</span>
+      <span class="hero__kicker-x">CINEMATIC REAL-TIME WORLD ENGINE</span>
+    </div>
+
+    <h1 class="hero__title">
+      <span class="hero__title-line">BLAME</span>
+      <span class="hero__title-line hero__title-line--out">ENGINE</span>
+    </h1>
+
+    <p class="hero__lede">
+      无需向沙箱妥协，更无需向重载低头。Blame Engine 将真实的现代高级语言直接注入微秒级安全沙箱，并在底层解耦物理与模拟。我们与虚幻引擎 5（Unreal Engine 5）视觉管道无缝互联，将纯粹的开发逻辑升华为电影级的次世代实时视界。
+    </p>
+
+    <!-- 3-CONSUMER CONTRACT DIAGRAM -->
+    <div class="contract" id="contractDiagram" aria-label="Three consumers sharing the Game API contract">
+      <!-- Consumer 1: Player -->
+      <div class="contract__col contract__col--player glow-card">
+        <div class="contract__chip-row">
+          <span class="contract__chip">CONSUMER 01</span>
+          <Icon name="lucide:terminal" class="contract__icon" width={15} height={15} />
+        </div>
+        <div class="contract__title">C++ / Rust 真实逻辑</div>
+        <div class="contract__sub">无缝热编译 → 毫秒级 Wasm 安全沙箱</div>
+        <div class="contract__path">NvimSurface · 极致沉浸的编码体验</div>
+        <div class="contract__tag tag--cyan">FUELED · SHIELDED</div>
+      </div>
+
+      <!-- Consumer 2: AI -->
+      <div class="contract__col contract__col--agent glow-card glow-card--amber">
+        <div class="contract__chip-row">
+          <span class="contract__chip">CONSUMER 02</span>
+          <Icon name="lucide:cpu" class="contract__icon" width={15} height={15} style="color: var(--amber)" />
+        </div>
+        <div class="contract__title">AI 智能体大脑</div>
+        <div class="contract__sub">Game API 控制层 · 观察意图并协同创作</div>
+        <div class="contract__path">API Gateway · 读写门控鉴权系统</div>
+        <div class="contract__tag tag--amber">INTELLIGENT · READY</div>
+      </div>
+
+      <!-- Consumer 3: UE5 -->
+      <div class="contract__col contract__col--view glow-card">
+        <div class="contract__chip-row">
+          <span class="contract__chip">CONSUMER 03</span>
+          <Icon name="lucide:tv" class="contract__icon" width={15} height={15} />
+        </div>
+        <div class="contract__title">UE5 视图客户端</div>
+        <div class="contract__sub">MirrorSubsystem · 专注于极致画面呈现</div>
+        <div class="contract__path">High-Fidelity Virtual Visual Bridge</div>
+        <div class="contract__tag tag--cyan">OPERATIONAL · 120 FPS</div>
+      </div>
+
+      <!-- Central Hub: Game API -->
+      <div class="contract__hub">
+        <div class="contract__hub-ring" aria-hidden="true"></div>
+        <div class="contract__hub-ring contract__hub-ring--2" aria-hidden="true"></div>
+        <div class="contract__hub-content">
+          <div class="contract__hub-eyebrow">UNIQUE CONTRACT</div>
+          <div class="contract__hub-name">Game API</div>
+          <div class="contract__hub-sub">能力域化 / 版本化 / 确定性 / 写即意图</div>
+        </div>
+      </div>
+
+      <!-- Flow Lines -->
+      <svg class="contract__lines" viewBox="0 0 1000 400" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="gCyan" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#0ae8c2" stop-opacity="0"></stop>
+            <stop offset=".5" stop-color="#0ae8c2" stop-opacity=".7"></stop>
+            <stop offset="1" stop-color="#0ae8c2" stop-opacity="0"></stop>
+          </linearGradient>
+          <linearGradient id="gAmber" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#f59e0b" stop-opacity="0"></stop>
+            <stop offset=".5" stop-color="#f59e0b" stop-opacity=".55"></stop>
+            <stop offset="1" stop-color="#f59e0b" stop-opacity="0"></stop>
+          </linearGradient>
+        </defs>
+
+        <path d="M 138 140 C 280 140, 360 200, 500 200" stroke="url(#gCyan)" stroke-width="1.4" fill="none" id="lineA"></path>
+        <path d="M 500 200 C 640 200, 720 260, 862 260" stroke="url(#gCyan)" stroke-width="1.4" fill="none" id="lineB"></path>
+        <path d="M 500 200 C 640 200, 720 140, 862 140" stroke="url(#gAmber)" stroke-width="1.2" fill="none" stroke-dasharray="4 4" id="lineC"></path>
+
+        <circle r="3" fill="#0ae8c2" id="pktA">
+          <animateMotion dur="3.2s" repeatCount="indefinite" path="M 138 140 C 280 140, 360 200, 500 200"></animateMotion>
+        </circle>
+        <circle r="3" fill="#0ae8c2" id="pktB">
+          <animateMotion dur="3.2s" repeatCount="indefinite" path="M 500 200 C 640 200, 720 260, 862 260"></animateMotion>
+        </circle>
+        <circle r="2.5" fill="#f59e0b" id="pktC">
+          <animateMotion dur="4.8s" repeatCount="indefinite" path="M 500 200 C 640 200, 720 140, 862 140"></animateMotion>
+        </circle>
+      </svg>
+    </div>
+
+    <div class="hero__cue">
+      <span>一个愿景，三条边界，一份契约</span>
+      <Icon name="lucide:arrow-down" class="hero__cue-arrow" width={12} height={12} />
+    </div>
+  </div>
+
+  <!-- Infinite horizontal scrolling labels ticker -->
+  <div class="hero__ticker" aria-hidden="true">
+    <div class="ticker__track">
+      {[0, 1].map((n) => (
+        <Fragment>
+          {tickerItems.map((item) => (
+            <span><span>{item}</span><i>·</i></span>
+          ))}
+        </Fragment>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .contract__chip-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .contract__icon {
+    color: var(--cyan);
+    filter: drop-shadow(0 0 4px currentColor);
+  }
+</style>

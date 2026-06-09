@@ -19,6 +19,7 @@ class World;
 namespace Next::gameapi {
 
 struct IWorldQuery;  // world_query.h — abstract spatial query, implemented by the gameplay layer
+struct IWaterQuery;  // world_query.h — abstract water-state query, implemented by the water layer
 
 // EntityId (ABI) <-> ECS Entity. EntityId is the Entity's 64-bit packed form; 0 stays invalid.
 // The bit layout lives once on Entity itself (Entity::FromPacked / operator uint64_t).
@@ -38,12 +39,17 @@ struct GameApiConfig {
     const SimClock* clock = nullptr;
     ObjectiveStore* objectives = nullptr;  // optional; Tasks calls return NotFound if null
     IWorldQuery* worldQuery = nullptr;     // optional; Raycast returns Unsupported if null
+    IWaterQuery* waterQuery = nullptr;     // optional; GetWaterState returns Unsupported if null
     EntityId self = kInvalidEntity;
     CapabilitySet capabilities = CapabilitySet::None();
 
     uint32_t maxHostCallsPerTick = 4096;  // total Game API calls per tick (rate limit)
     uint32_t maxCommsPerTick = 64;        // SendSignal quota per tick
     uint32_t maxLogsPerTick = 64;         // Log quota per tick
+    // F-1 fix (sandbox audit): QueryByTag / SenseRadius / SenseNearest are O(N) world scans whose
+    // host cost is decoupled from the flat per-call fuel price. They share this dedicated, tighter
+    // per-tick quota so a guest cannot turn cheap calls into asymmetric host work (DoS surface).
+    uint32_t maxWorldScansPerTick = 256;
     uint32_t logRingCapacity = 256;       // captured log lines retained for replay/debug
 };
 
@@ -70,6 +76,7 @@ public:
     const std::deque<std::string>& LogRing() const { return logRing_; }
 
     uint64_t HostCallsThisTick() const { return hostCallsThisTick_; }
+    uint32_t WorldScansThisTick() const { return scansThisTick_; }
 
     // --- Time domain ---
     Status GetTick(uint64_t& outTick);
@@ -87,6 +94,8 @@ public:
     Status SenseNearest(float radius, uint32_t tag, EntityId& outEntity, float& outDistance);
     // Cast a ray against the physical world (via the injected IWorldQuery). Unsupported if none.
     Status Raycast(const Vec3Abi& origin, const Vec3Abi& direction, float maxDistance, RaycastResult& out);
+    // Read the water state at a world point (via the injected IWaterQuery). Unsupported if none.
+    Status GetWaterState(const Vec3Abi& point, WaterStateResult& out);
 
     // --- Actuate domain (intents) ---
     Status MoveTo(const Vec3Abi& target, float maxSpeed);
@@ -107,6 +116,10 @@ private:
     // Charge one call against the per-tick host-call budget. Returns false (RateLimited) if spent.
     bool ChargeHostCall();
 
+    // F-1: charge one O(N) world scan (QueryByTag / SenseRadius / SenseNearest) against the
+    // dedicated per-tick scan quota. Ok == proceed; RateLimited when the quota is spent.
+    Status ChargeWorldScan();
+
     // Shared entry guard for every call: enforce the capability, then charge one host-call.
     // Capability is checked first, so a denied call never consumes budget. Ok == proceed.
     Status Enter(Capability c);
@@ -120,12 +133,14 @@ private:
     const SimClock* clock_;
     ObjectiveStore* objectives_;
     IWorldQuery* worldQuery_;
+    IWaterQuery* waterQuery_;
     EntityId self_;
     CapabilitySet caps_;
 
     uint32_t maxHostCallsPerTick_;
     uint32_t maxCommsPerTick_;
     uint32_t maxLogsPerTick_;
+    uint32_t maxWorldScansPerTick_;
     uint32_t logRingCapacity_;
 
     IntentQueue intents_;
@@ -134,6 +149,7 @@ private:
     uint64_t hostCallsThisTick_ = 0;
     uint32_t commsThisTick_ = 0;
     uint32_t logsThisTick_ = 0;
+    uint32_t scansThisTick_ = 0;
 };
 
 }  // namespace Next::gameapi

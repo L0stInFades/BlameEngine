@@ -639,8 +639,8 @@ AssetHandle AssetManager::LoadAssetSync(const std::string& assetName) {
     loadedAssetsCount_++;
     totalMemory_ += data->GetPayloadSize();
 
-    NEXT_LOG_INFO("Asset loaded successfully: %s (ID: %llu, size: %zu bytes)",
-                  storageKey.c_str(), id, data->GetPayloadSize());
+    NEXT_LOG_INFO("Asset loaded successfully: %s (ID: %llu, size: %zu bytes)", storageKey.c_str(),
+                  static_cast<unsigned long long>(id), data->GetPayloadSize());
 
     return AssetHandle(id, data.get());
 }
@@ -907,6 +907,9 @@ bool AssetManager::GetMeshAssetView(const AssetHandle& handle, MeshAssetView& ou
     outView.header = meshData->GetHeader();
     outView.payload = meshData->GetPayload();
     outView.payloadBytes = meshData->GetPayloadSize();
+    // B3 fix: the view shares ownership of the asset data, so `payload` cannot dangle if the
+    // asset is unloaded while the caller still holds the view.
+    outView.keepAlive = std::move(data);
     return outView.payload != nullptr || outView.payloadBytes == 0;
 }
 
@@ -923,6 +926,8 @@ bool AssetManager::GetTextureAssetView(const AssetHandle& handle, TextureAssetVi
     outView.header = textureData->GetHeader();
     outView.pixels = textureData->GetPayload();
     outView.pixelBytes = textureData->GetPayloadSize();
+    // B3 fix: see GetMeshAssetView.
+    outView.keepAlive = std::move(data);
     return outView.pixels != nullptr || outView.pixelBytes == 0;
 }
 
@@ -939,6 +944,8 @@ bool AssetManager::GetMaterialAssetView(const AssetHandle& handle, MaterialAsset
     outView.header = materialData->GetHeader();
     outView.payload = materialData->GetPayload();
     outView.payloadBytes = materialData->GetPayloadSize();
+    // B3 fix: see GetMeshAssetView.
+    outView.keepAlive = std::move(data);
     return outView.payload != nullptr || outView.payloadBytes == 0;
 }
 

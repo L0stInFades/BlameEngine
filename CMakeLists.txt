@@ -63,6 +63,16 @@ if(WIN32)
     add_compile_options(/utf-8)
 endif()
 
+# Deterministic floating point (ADR-0009/0015, server-authoritative replay / anti-cheat red line):
+# forbid FMA contraction (a*b+c fused into one rounding differs across compilers/CPUs) and fast-math, so
+# the authoritative sim computes bit-identical results across platforms. det_trig.h handles the wave
+# trig; these flags pin the rest of the float math. Applies engine-wide.
+if(MSVC)
+    add_compile_options(/fp:precise)
+else()
+    add_compile_options(-ffp-contract=off -fno-fast-math)
+endif()
+
 # Engine modules
 add_subdirectory(engine/foundation)
 if(BUILD_LEGACY_LOG)
@@ -91,6 +101,10 @@ add_subdirectory(engine/boundary)  # ADR-0006: sim↔UE5 snapshot stream + comma
 add_subdirectory(engine/physics)   # ADR-0009: IPhysicsWorld + deterministic reference backend (+ optional Jolt)
 add_subdirectory(engine/gameplay)  # ADR-0010: gameplay layer — ActuationSystem (single Transform writer)
 add_subdirectory(engine/level)     # data-driven level authoring + validation + deterministic loading
+add_subdirectory(engine/vegetation)  # ADR-0014: data-driven species + deterministic per-cell scatter (core owns placement; UE5 renders)
+add_subdirectory(engine/vegetation_world)  # ADR-0014: vegetation<->world integration (cook + runtime store)
+add_subdirectory(engine/water)  # ADR-0015: deterministic Gerstner surface + Archimedes buoyancy core (core owns water sim; UE5 renders)
+add_subdirectory(engine/water_world)  # ADR-0015: water<->world integration (cook + store + buoyancy system + streaming)
 # add_subdirectory(engine/animation)
 # add_subdirectory(engine/ai)
 # add_subdirectory(engine/gameplay)

@@ -188,6 +188,16 @@ Status AbiDispatch::HostCall(GameApi& api, CallId id, const void* args, uint32_t
                 return s;
             return WriteRet(ret, retLen, r) ? Status::Ok : Status::BufferTooSmall;
         }
+        case CallId::GetWaterState: {
+            GetWaterStateArgs a{};
+            if (!ReadArg(args, argsLen, a))
+                return Status::InvalidArgument;
+            WaterStateResult r{};
+            const Status s = api.GetWaterState(a.point, r);
+            if (s != Status::Ok)
+                return s;
+            return WriteRet(ret, retLen, r) ? Status::Ok : Status::BufferTooSmall;
+        }
         case CallId::Count_:
             break;
     }

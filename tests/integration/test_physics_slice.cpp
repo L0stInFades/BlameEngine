@@ -144,6 +144,7 @@ TEST(PhysicsSlice, GuestDrivesPhysicsBodyToObjectiveAndStreams) {
             if (u.id == agentId)
                 sawAgentUpdate = true;
         }
+        publisher.Acknowledge(snap->sequence);  // lossless consumer acks -> deltas compress to updates
     }
 
     // The guest, speaking only the Game API, drove its physics body to the objective.

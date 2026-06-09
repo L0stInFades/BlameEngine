@@ -1,0 +1,282 @@
+---
+import '../styles/global.css'
+---
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BLAME ENGINE — 重塑开放世界法则 · 权威模拟引擎 · 真实代码驱动真实生态</title>
+    <meta
+      name="description"
+      content="Blame Engine 是一款自研的 C++23 实时模拟引擎。核心愿景：让玩家在内嵌的 Neovim 中编写真实代码，经 WASM 沙箱安全隔离执行，通过严格权限管控 of Game API，直接驱动 Headless 权威世界，实现真实生态的流转。完全支持在无 GPU 甚至无 UE5 的服务器与 CI 环境下高效运行。"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23050608'/%3E%3Ctext x='16' y='23' font-family='monospace' font-size='20' font-weight='700' fill='%230ae8c2' text-anchor='middle'%3E%3E_%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <canvas class="world-canvas" id="worldCanvas" aria-hidden="true"></canvas>
+    <!-- ============ MARGINALIA FRAME ============ -->
+    <div class="frame" aria-hidden="true">
+      <span class="frame__bl">C++23 · NVIM—EMBED · WASM</span>
+      <span class="frame__br">SYS_STATUS · OPERATIONAL</span>
+    </div>
+
+    <!-- ============ SCROLL RAIL ============ -->
+    <div class="rail" aria-hidden="true"><span class="rail__bar" id="railBar"></span></div>
+
+    <!-- ============ GLOBAL OVERLAY (grain noise, one composited layer) ============ -->
+    <div class="fx" id="fx" aria-hidden="true"></div>
+
+    <main class="page-shell" id="pageShell">
+      <slot />
+    </main>
+
+    <script>
+      import Lenis from 'lenis'
+
+      const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+      // --- film grain + scanlines folded into ONE composited layer ---
+      const fx = document.querySelector<HTMLElement>('.fx')
+      if (fx && !REDUCED) {
+        const c = document.createElement('canvas')
+        c.width = 128
+        c.height = 128
+        const ctx = c.getContext('2d')
+        if (ctx) {
+          const img = ctx.createImageData(128, 128)
+          const d = img.data
+          for (let i = 0; i < d.length; i += 4) {
+            const v = Math.floor(Math.random() * 255)
+            d[i] = v
+            d[i + 1] = v
+            d[i + 2] = v
+            d[i + 3] = 10
+          }
+          ctx.putImageData(img, 0, 0)
+          fx.style.backgroundImage = `url(${c.toDataURL()})`
+        }
+      }
+
+      // --- reveal on scroll ---
+      const reveals = document.querySelectorAll('.reveal')
+      if ('IntersectionObserver' in window && !REDUCED) {
+        const io = new IntersectionObserver(
+          (entries, obs) => {
+            entries.forEach((e) => {
+              if (e.isIntersecting) {
+                e.target.classList.add('is-in')
+                obs.unobserve(e.target)
+              }
+            })
+          },
+          { rootMargin: '0px 0px -10% 0px', threshold: 0.05 }
+        )
+        reveals.forEach((r) => io.observe(r))
+      } else {
+        reveals.forEach((r) => r.classList.add('is-in'))
+      }
+
+      // --- nav scroll-spy + sticky · rail progress · hero cue ---
+      const nav = document.getElementById('nav')
+      const railBar = document.getElementById('railBar')
+      const cue = document.querySelector<HTMLElement>('.hero__cue')
+      const navLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>('.nav__links a'))
+      const navIds = ['bet', 'loop', 'contract', 'sandbox', 'world', 'boundary', 'arch', 'run', 'road']
+      let tops: { id: string; top: number }[] = []
+      const measure = () => {
+        tops = navIds
+          .map((id) => {
+            const el = document.getElementById(id)
+            return el ? { id, top: el.offsetTop } : null
+          })
+          .filter((x): x is { id: string; top: number } => x !== null)
+      }
+
+      let ticking = false
+      const update = (y: number) => {
+        if (ticking) return
+        ticking = true
+        requestAnimationFrame(() => {
+          if (nav) nav.classList.toggle('is-stuck', y > 40)
+          if (cue) cue.style.opacity = y < 200 ? '1' : '0'
+          if (tops.length && navLinks.length) {
+            const yy = y + 120
+            let active = tops[0].id
+            for (const t of tops) {
+              if (t.top <= yy) active = t.id
+              else break
+            }
+            navLinks.forEach((a) =>
+              a.classList.toggle('is-active', a.getAttribute('href') === `#${active}`)
+            )
+          }
+          ticking = false
+        })
+      }
+
+      // --- Lenis smooth scroll (rAF gated: ticks only while actively scrolling) ---
+      let wake: () => void = () => {}
+      let lenis: Lenis | null = null
+      if (!REDUCED) {
+        lenis = new Lenis({
+          duration: 1.2,
+          easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+          smoothWheel: true,
+        })
+        let rafId = 0
+        let idle: ReturnType<typeof setTimeout> | undefined
+        const loop = (time: number) => {
+          lenis!.raf(time)
+          rafId = requestAnimationFrame(loop)
+        }
+        const stop = () => {
+          if (rafId) {
+            cancelAnimationFrame(rafId)
+            rafId = 0
+          }
+        }
+        wake = () => {
+          if (!rafId) rafId = requestAnimationFrame(loop)
+          if (idle) clearTimeout(idle)
+          idle = setTimeout(stop, 280)
+        }
+        lenis.on('scroll', (e: { progress: number; scroll: number }) => {
+          if (railBar) railBar.style.width = `${e.progress * 100}%`
+          update(e.scroll)
+          wake()
+        })
+        ;['wheel', 'touchstart', 'pointerdown', 'keydown'].forEach((ev) =>
+          window.addEventListener(ev, wake, { passive: true })
+        )
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) stop()
+          else wake()
+        })
+        wake()
+      } else {
+        window.addEventListener('scroll', () => update(window.scrollY), { passive: true })
+      }
+
+      // --- same-document View Transition for anchor navigation ---
+      let routeBusy = false
+      const runRouteTransition = async (el: HTMLElement, href: string) => {
+        if (routeBusy) return
+
+        routeBusy = true
+        const direction = el.offsetTop < window.scrollY ? -1 : 1
+        const scrollToTarget = () => {
+          if (lenis) {
+            wake()
+            lenis.scrollTo(el, { offset: href === '#top' ? 0 : -80, immediate: true })
+          } else {
+            window.scrollTo({ top: href === '#top' ? 0 : Math.max(0, el.offsetTop - 80), behavior: 'instant' })
+          }
+          history.pushState(null, '', href)
+          measure()
+          update(window.scrollY)
+        }
+
+        document.documentElement.classList.add('is-anchor-transitioning')
+        document.documentElement.classList.toggle('route-backward', direction < 0)
+        document.documentElement.classList.toggle('route-forward', direction > 0)
+        document.body.classList.add('is-anchor-transitioning')
+
+        try {
+          if ('startViewTransition' in document) {
+            const transition = document.startViewTransition(scrollToTarget)
+            await transition.finished
+          } else {
+            scrollToTarget()
+          }
+        } finally {
+          document.documentElement.classList.remove('is-anchor-transitioning')
+          document.documentElement.classList.remove('route-forward', 'route-backward')
+          document.body.classList.remove('is-anchor-transitioning')
+          routeBusy = false
+        }
+      }
+
+      // --- anchor smooth scroll ---
+      window.addEventListener('click', (e) => {
+        const a = (e.target as HTMLElement).closest('a')
+        const href = a?.getAttribute('href')
+        if (!href || !href.startsWith('#')) return
+        const el =
+          href === '#top' ? document.documentElement : document.querySelector<HTMLElement>(href)
+        if (!el) return
+        e.preventDefault()
+        runRouteTransition(el, href)
+      }, { capture: true })
+
+      // --- low-cost world/vegetation backdrop ---
+      const canvas = document.getElementById('worldCanvas') as HTMLCanvasElement | null
+      const ctx = canvas?.getContext('2d')
+      if (canvas && ctx) {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2)
+        let w = 0
+        let h = 0
+        let blades: { x: number; y: number; h: number; s: number; c: number }[] = []
+        const resizeWorld = () => {
+          w = canvas.clientWidth
+          h = canvas.clientHeight
+          canvas.width = Math.floor(w * dpr)
+          canvas.height = Math.floor(h * dpr)
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+          blades = Array.from({ length: Math.min(560, Math.max(260, Math.floor(w * 0.38))) }, () => ({
+            x: Math.random() * w,
+            y: h * (0.46 + Math.random() * 0.5),
+            h: 18 + Math.random() * 86,
+            s: Math.random() * Math.PI * 2,
+            c: 88 + Math.random() * 62,
+          }))
+        }
+        const drawWorld = (time = 0) => {
+          ctx.clearRect(0, 0, w, h)
+          const sky = ctx.createLinearGradient(0, 0, 0, h)
+          sky.addColorStop(0, '#111827')
+          sky.addColorStop(0.54, '#0d1713')
+          sky.addColorStop(1, '#050608')
+          ctx.fillStyle = sky
+          ctx.fillRect(0, 0, w, h)
+          ctx.strokeStyle = 'rgba(10, 232, 194, 0.09)'
+          for (let i = 0; i < 10; i++) {
+            const y = h * 0.52 + i * 35
+            ctx.beginPath()
+            ctx.moveTo(0, y)
+            ctx.lineTo(w, y + i * 10)
+            ctx.stroke()
+          }
+          for (const blade of blades) {
+            const sway = Math.sin(time * 0.0015 + blade.s + blade.y * 0.01) * 12
+            ctx.strokeStyle = `hsla(${blade.c}, 72%, 45%, 0.34)`
+            ctx.lineWidth = 0.8
+            ctx.beginPath()
+            ctx.moveTo(blade.x, blade.y)
+            ctx.quadraticCurveTo(blade.x + sway * 0.3, blade.y - blade.h * 0.5, blade.x + sway, blade.y - blade.h)
+            ctx.stroke()
+          }
+          if (!REDUCED) requestAnimationFrame(drawWorld)
+        }
+        resizeWorld()
+        window.addEventListener('resize', resizeWorld)
+        drawWorld()
+      }
+
+      if (cue) cue.style.transition = 'opacity .3s var(--ease)'
+      measure()
+      window.addEventListener('resize', measure)
+      update(0)
+    </script>
+  </body>
+</html>

@@ -9,6 +9,7 @@ add_library(next_world STATIC
     src/world_partition.cpp
     src/async_io.cpp
     src/streaming_manager.cpp
+    src/layered_cell_file.cpp
     src/interest_manager.cpp
     src/lod_system.cpp
     src/eviction_policy.cpp

@@ -16,6 +16,7 @@
 #include "next/gameapi/components.h"
 #include "next/gameapi/game_api.h"
 #include "next/gameapi/sim_clock.h"
+#include "next/gameapi/world_query.h"
 #include "next/runtime/transform.h"
 #include "next/runtime/world.h"
 #include "next/sandbox/bytecode.h"
@@ -268,6 +269,68 @@ TEST(SandboxBoundary, HostCallPerTickBudgetEnforced) {
     }
     b.Emit(Op::Halt);
     EXPECT_EQ(St(RunGuest(api, b.Build(), Policy()).ret), Status::RateLimited);
+}
+
+// A scriptable IWaterQuery so the sandbox path can be tested without linking engine/water.
+struct MockWaterQuery : gameapi::IWaterQuery {
+    gameapi::WaterStateResult next{};
+    gameapi::WaterStateResult QueryWater(const float[3]) override { return next; }
+};
+
+// W10: a guest reads water state through the ABI. Proves the WHOLE chain guest -> RefVm ->
+// GameApiGateway (CapabilityFor(GetWaterState) == Sense, granted) -> AbiDispatch -> GameApi ->
+// IWaterQuery, and that the result POD lands in guest memory at the documented field offsets.
+TEST(SandboxBoundary, GuestReadsWaterStateThroughAbi) {
+    Sim sim;
+    MockWaterQuery water;
+    water.next.inWater = 1;
+    water.next.submerged = 1;
+    water.next.submersionDepth = 2.0f;  // field at offset 20 in WaterStateResult
+    GameApiConfig cfg;
+    cfg.world = &sim.world;
+    cfg.clock = &sim.clock;
+    cfg.objectives = &sim.objectives;
+    cfg.self = sim.agentId;
+    cfg.capabilities = CapabilitySet::PlayerDefault();
+    cfg.waterQuery = &water;
+    GameApi api(cfg);
+
+    BytecodeBuilder b;
+    StoreF32(b, 0, 1.0f);  // GetWaterStateArgs.point = (1, -2, 3) at [0,12)
+    StoreF32(b, 4, -2.0f);
+    StoreF32(b, 8, 3.0f);
+    HC(b, 0, 12, 64, 36, CallId::GetWaterState);     // WaterStateResult (36 bytes) at [64,100)
+    b.Emit(Op::Pop);                                 // discard the Status
+    b.PushI(64 + 20).Emit(Op::Ld32).Emit(Op::Halt);  // load submersionDepth (offset 20 in the result)
+    const RunResult r = RunGuest(api, b.Build(), Policy());
+    EXPECT_EQ(r.trap, TrapReason::None);
+    float depth = 0.0f;
+    const uint32_t bits = static_cast<uint32_t>(r.ret & 0xFFFFFFFFu);
+    std::memcpy(&depth, &bits, sizeof(depth));
+    EXPECT_NEAR(depth, 2.0f, 1e-4f);
+}
+
+// W10: GetWaterState is Sense-gated; a guest whose policy lacks Sense is denied at the gateway (the
+// outer ring), before the facade — defense in depth, same as every other Sense call.
+TEST(SandboxBoundary, GuestWaterStateDeniedWithoutSense) {
+    Sim sim;
+    MockWaterQuery water;
+    GameApiConfig cfg;
+    cfg.world = &sim.world;
+    cfg.clock = &sim.clock;
+    cfg.self = sim.agentId;
+    cfg.capabilities = CapabilitySet().Grant(gameapi::Capability::Observe);  // no Sense (inner ring)
+    cfg.waterQuery = &water;
+    GameApi api(cfg);
+
+    SandboxPolicy p = Policy();
+    p.capabilities = CapabilitySet().Grant(gameapi::Capability::Observe);  // no Sense (outer ring)
+    BytecodeBuilder b;
+    HC(b, 0, 12, 64, 36, CallId::GetWaterState);
+    b.Emit(Op::Halt);
+    const RunResult r = RunGuest(api, b.Build(), p);
+    EXPECT_EQ(r.trap, TrapReason::None);
+    EXPECT_EQ(St(r.ret), Status::PermissionDenied);
 }
 
 // C15: NaN arguments are rejected at the facade and record no intent.

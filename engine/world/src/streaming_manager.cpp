@@ -1,5 +1,6 @@
 #include "next/streaming/streaming_manager.h"
 #include "next/streaming/cell_file_format.h"
+#include "next/streaming/layered_cell_file.h"
 #include "next/foundation/logger.h"
 #include "next/runtime/asset/asset_manager.h"
 #include "next/jobsystem/job_system.h"
@@ -213,8 +214,8 @@ bool ValidateStreamingManagerConfig(const StreamingManagerConfig& config, size_t
         return false;
     }
     if (config.maxConcurrentLoads == 0 || config.maxConcurrentUnloads == 0) {
-        NEXT_LOG_ERROR("Invalid streaming concurrency limits: loads=%u unloads=%u",
-                       config.maxConcurrentLoads, config.maxConcurrentUnloads);
+        NEXT_LOG_ERROR("Invalid streaming concurrency limits: loads=%u unloads=%u", config.maxConcurrentLoads,
+                       config.maxConcurrentUnloads);
         return false;
     }
 
@@ -256,8 +257,7 @@ uint32_t CellFileExtensionRank(const std::filesystem::path& path, const std::wst
     return std::numeric_limits<uint32_t>::max();
 }
 
-std::filesystem::path ResolveCellFilePath(const std::filesystem::path& root,
-                                          const CellCoord& coord,
+std::filesystem::path ResolveCellFilePath(const std::filesystem::path& root, const CellCoord& coord,
                                           const std::wstring& preferredExtension) {
     std::vector<std::wstring> extensions;
     auto pushUniqueExt = [&](const std::wstring& ext) {
@@ -313,16 +313,11 @@ StreamingCellInfo MakeStreamingCellInfo(const CellData& cell) {
     return info;
 }
 
-} // namespace
+}  // namespace
 
 // ===== Streaming Manager Implementation =====
 
-StreamingManager::StreamingManager()
-    : currentFrame_(0)
-    , elapsedTime_(0.0f)
-    , initialized_(false)
-{
-}
+StreamingManager::StreamingManager() : currentFrame_(0), elapsedTime_(0.0f), initialized_(false) {}
 
 StreamingManager::~StreamingManager() {
     Shutdown();
@@ -430,7 +425,8 @@ void StreamingManager::ScanAvailableCells() {
         }
         const size_t us2 = rest.find(L'_', us1 + 1);
         const std::wstring xStr = rest.substr(0, us1);
-        const std::wstring zStr = (us2 == std::wstring::npos) ? rest.substr(us1 + 1) : rest.substr(us1 + 1, us2 - (us1 + 1));
+        const std::wstring zStr =
+            (us2 == std::wstring::npos) ? rest.substr(us1 + 1) : rest.substr(us1 + 1, us2 - (us1 + 1));
         try {
             out.x = std::stoi(xStr);
             out.z = std::stoi(zStr);
@@ -440,10 +436,8 @@ void StreamingManager::ScanAvailableCells() {
         return true;
     };
 
-    std::filesystem::recursive_directory_iterator it(
-        root,
-        std::filesystem::directory_options::skip_permission_denied,
-        ec);
+    std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied,
+                                                     ec);
     const std::filesystem::recursive_directory_iterator end;
     for (; !ec && it != end; it.increment(ec)) {
         const auto& entry = *it;
@@ -468,7 +462,8 @@ void StreamingManager::ScanAvailableCells() {
     }
 }
 
-void StreamingManager::Update(float deltaTime, const Vec3& cameraPosition, const Vec3& cameraDirection, const Vec3& cameraVelocity) {
+void StreamingManager::Update(float deltaTime, const Vec3& cameraPosition, const Vec3& cameraDirection,
+                              const Vec3& cameraVelocity) {
     if (!initialized_) {
         return;
     }
@@ -498,11 +493,8 @@ void StreamingManager::Update(float deltaTime, const Vec3& cameraPosition, const
         const Vec3 target = cameraPosition + cameraDirection;
         const Vec3 up(0.0f, 1.0f, 0.0f);
         const Mat4 view = Mat4::LookAt(cameraPosition, target, up);
-        const Mat4 projection = Mat4::Perspective(
-            config_.cameraFovRadians,
-            config_.cameraAspectRatio,
-            config_.cameraNearPlane,
-            config_.cameraFarPlane);
+        const Mat4 projection = Mat4::Perspective(config_.cameraFovRadians, config_.cameraAspectRatio,
+                                                  config_.cameraNearPlane, config_.cameraFarPlane);
         const Mat4 viewProjection = projection * view;
         lodSystem_->Update(deltaTime, cameraPosition, viewProjection);
     }
@@ -562,8 +554,7 @@ void StreamingManager::ProcessCellOpCompletions() {
         // remaining successful loads to a later frame so committing a burst of completions
         // can't stall the main thread. Always allow at least one commit per frame (when
         // uploadBytesThisFrame == 0) so forward progress is guaranteed even for a large cell.
-        if (c.isLoad && c.success && uploadBudget != 0 &&
-            stats_.uploadBytesThisFrame != 0 &&
+        if (c.isLoad && c.success && uploadBudget != 0 && stats_.uploadBytesThisFrame != 0 &&
             stats_.uploadBytesThisFrame + c.bytes > uploadBudget) {
             for (size_t j = completionIndex; j < local.size(); ++j) {
                 deferred.push_back(std::move(local[j]));
@@ -618,10 +609,11 @@ void StreamingManager::ProcessCellOpCompletions() {
                     continue;
                 }
 
-                layerData = memoryPool_ ? memoryPool_->Allocate(c.rawCellData.size(), alignof(std::max_align_t)) : nullptr;
+                layerData =
+                    memoryPool_ ? memoryPool_->Allocate(c.rawCellData.size(), alignof(std::max_align_t)) : nullptr;
                 if (!layerData) {
-                    NEXT_LOG_ERROR("Failed to allocate %zu bytes for cell (%d,%d)",
-                                   c.rawCellData.size(), c.coord.x, c.coord.z);
+                    NEXT_LOG_ERROR("Failed to allocate %zu bytes for cell (%d,%d)", c.rawCellData.size(), c.coord.x,
+                                   c.coord.z);
                     worldPartition_->UpdateCellState(c.coord, CellLoadState::Error);
                     stats_.failedLoads++;
                     continue;
@@ -640,7 +632,7 @@ void StreamingManager::ProcessCellOpCompletions() {
             const uint64_t diskBytes = c.diskBytes != 0 ? c.diskBytes : c.bytes;
             cell->isPlaceholderData = false;
             cell->metadata.dataSize = diskBytes;
-            cell->metadata.memorySize = c.bytes; // approximate for package-backed cells
+            cell->metadata.memorySize = c.bytes;  // approximate for package-backed cells
             cell->metadata.SetLayerPresent(CellLayer::StaticMesh);
             worldPartition_->UpdateCellState(c.coord, CellLoadState::Loaded);
             evictionPolicy_->RecordAccess(c.coord, currentFrame_);
@@ -790,8 +782,7 @@ std::vector<CellCoord> StreamingManager::GetCellsInRange(const Vec3& position, f
             Vec3 cellCenter = worldPartition_->CellToWorld(coord);
             Vec3 toCell = cellCenter - position;
             if (toCell.Dot(toCell) <= radiusSq) {
-                if (!config_.allowPlaceholderCellLoad &&
-                    hasAvailableCellIndex &&
+                if (!config_.allowPlaceholderCellLoad && hasAvailableCellIndex &&
                     availableCells_.find(coord) == availableCells_.end() &&
                     bundleAvailableCells_.find(coord) == bundleAvailableCells_.end()) {
                     continue;
@@ -832,7 +823,8 @@ StreamingHandle StreamingManager::LoadAssetBundle(const std::wstring& bundlePath
         }
         const size_t us2 = rest.find(L'_', us1 + 1);
         const std::wstring xStr = rest.substr(0, us1);
-        const std::wstring zStr = (us2 == std::wstring::npos) ? rest.substr(us1 + 1) : rest.substr(us1 + 1, us2 - (us1 + 1));
+        const std::wstring zStr =
+            (us2 == std::wstring::npos) ? rest.substr(us1 + 1) : rest.substr(us1 + 1, us2 - (us1 + 1));
         try {
             out.x = std::stoi(xStr);
             out.z = std::stoi(zStr);
@@ -888,10 +880,8 @@ StreamingHandle StreamingManager::LoadAssetBundle(const std::wstring& bundlePath
 
     std::error_code pathEc;
     if (std::filesystem::is_directory(p, pathEc)) {
-        std::filesystem::recursive_directory_iterator it(
-            p,
-            std::filesystem::directory_options::skip_permission_denied,
-            pathEc);
+        std::filesystem::recursive_directory_iterator it(p, std::filesystem::directory_options::skip_permission_denied,
+                                                         pathEc);
         const std::filesystem::recursive_directory_iterator end;
         for (; !pathEc && it != end; it.increment(pathEc)) {
             const auto& entry = *it;
@@ -937,8 +927,7 @@ void StreamingManager::UnloadAssetBundle(StreamingHandle handle) {
         return;
     }
 
-    auto findReplacementBundle = [this, bundleId = handle.id](const CellCoord& coord,
-                                                              uint64_t& replacementId,
+    auto findReplacementBundle = [this, bundleId = handle.id](const CellCoord& coord, uint64_t& replacementId,
                                                               std::wstring& replacementPath) {
         replacementId = 0;
         replacementPath.clear();
@@ -1039,46 +1028,191 @@ void StreamingManager::LoadCellLayer(const CellCoord& coord, CellLayer layer, fl
         return;
     }
 
-    // Framework behavior: only StaticMesh is backed by a real cell blob right now.
+    // StaticMesh stays on the async single-payload .ncell path (unchanged).
     if (layer == CellLayer::StaticMesh) {
         LoadCell(coord, priority);
         return;
     }
 
-    if (!config_.allowPlaceholderCellLoad) {
-        NEXT_LOG_WARNING("LoadCellLayer: placeholder layers disabled; ignoring layer=%u for cell(%d,%d)",
-                         static_cast<uint32_t>(layer), coord.x, coord.z);
-        return;
-    }
-
-    // Ensure the cell exists and is at least loaded at the cell level.
+    // The cell must exist at the cell level first (same contract as before). If it doesn't yet, kick a
+    // cell load; callers drive Update() to create it, then call LoadCellLayer again (gap #11).
     if (!worldPartition_->GetCell(coord)) {
         LoadCell(coord, priority);
     }
-
     CellData* cell = worldPartition_->GetCell(coord);
     if (!cell) {
         return;
     }
 
-    auto it = cell->layers.find(layer);
-    if (it != cell->layers.end() && it->second.state == CellLoadState::Loaded) {
+    // Already loaded with real data? Idempotent no-op.
+    auto existing = cell->layers.find(layer);
+    if (existing != cell->layers.end() && existing->second.state == CellLoadState::Loaded &&
+        existing->second.data != nullptr) {
+        return;
+    }
+    // Already loading (or an abandoned read still draining) for this {coord,layer}? Coalesce. A re-load issued
+    // while a prior load/unload of the SAME layer is still in flight is therefore dropped: pump Update() until
+    // PendingLayerLoadCount()==0 between an Unload and a reload of the same layer (gap #6).
+    const CellLayerKey key{coord, layer};
+    if (activeLayerLoadOperations_.count(key) != 0) {
         return;
     }
 
+    // Absence is decided SYNCHRONOUSLY (a stat) so the placeholder / fail-closed terminal states are exactly
+    // as before; only the real-data case goes async (ADR-0014).
+    const std::filesystem::path path = GetLayeredCellFilePath(coord);
+    std::error_code ec;
+    uint64_t fileSize = 0;
+    if (std::filesystem::exists(path, ec) && !ec) {
+        const auto sz = std::filesystem::file_size(path, ec);
+        if (!ec) {
+            fileSize = static_cast<uint64_t>(sz);
+        }
+    }
+
+    if (fileSize > 0) {
+        // Real cooked data exists -> kick a NON-BLOCKING async whole-file read. The commit happens on the main
+        // thread in FinishLayerLoad (the read callback runs inside asyncIO_->Update()). Any failure to even
+        // START the read is fail-closed -> never a placeholder when real data is on disk.
+        size_t budgetBytes = 0;
+        const bool budgetOk = ComputeStreamingMemoryBudgetBytes(config_, budgetBytes) &&
+                              fileSize <= static_cast<uint64_t>(budgetBytes) &&
+                              fileSize <= static_cast<uint64_t>(std::numeric_limits<size_t>::max());
+        ActiveLayerOp op;
+        if (budgetOk) {
+            try {
+                op.rawReadBuffer.resize(static_cast<size_t>(fileSize));
+            } catch (const std::exception&) {
+                op.rawReadBuffer.clear();
+            }
+        }
+        if (asyncIO_ && !op.rawReadBuffer.empty()) {
+            const uint32_t ioPriority =
+                priority >= 1.0f ? 0u : static_cast<uint32_t>((1.0f - std::max(0.0f, priority)) * 1000.0f);
+            const uint64_t requestId = asyncIO_->SubmitReadRequest(
+                path.wstring(), 0, fileSize, op.rawReadBuffer.data(), CompressionType::None,
+                [this, key](bool success, uint64_t /*bytes*/) { FinishLayerLoad(key, success); }, ioPriority);
+            if (requestId != 0) {
+                op.asyncRequestId = requestId;
+                // Publish a Loading entry: IsCellLayerLoaded()==false and Sync() skips it until commit.
+                CellData::LayerData ld;
+                ld.layer = layer;
+                ld.data = nullptr;
+                ld.size = 0;
+                ld.state = CellLoadState::Loading;
+                cell->layers[layer] = ld;
+                activeLayerLoadOperations_[key] = std::move(op);
+                return;
+            }
+        }
+        NEXT_LOG_ERROR("LoadCellLayer: failed to start async read for layer=%u cell(%d,%d); fail-closed",
+                       static_cast<uint32_t>(layer), coord.x, coord.z);
+        return;
+    }
+
+    // No cooked data for this layer (file absent or empty).
+    if (!config_.allowPlaceholderCellLoad) {
+        NEXT_LOG_WARNING("LoadCellLayer: no cooked data for layer=%u cell(%d,%d); fail-closed (no placeholder)",
+                         static_cast<uint32_t>(layer), coord.x, coord.z);
+        return;
+    }
+
+    // Placeholder (keeps demos running without authored layer data).
     CellData::LayerData ld;
     ld.layer = layer;
     ld.data = nullptr;
     ld.size = 0;
     ld.state = CellLoadState::Loaded;
+    ld.generation = nextLayerGeneration_++;
     cell->layers[layer] = ld;
     cell->metadata.SetLayerPresent(layer);
     cell->isPlaceholderData = true;
 }
 
+std::filesystem::path StreamingManager::GetLayeredCellFilePath(const CellCoord& coord) const {
+    const std::wstring ext = config_.layeredCellExtension.empty() ? L".nlc" : config_.layeredCellExtension;
+    return std::filesystem::path(config_.cellDataDirectory) /
+           (L"cell_" + std::to_wstring(coord.x) + L"_" + std::to_wstring(coord.z) + ext);
+}
+
+void StreamingManager::FinishLayerLoad(const CellLayerKey& key, bool success) {
+    auto it = activeLayerLoadOperations_.find(key);
+    if (it == activeLayerLoadOperations_.end()) {
+        return;  // already reclaimed (only this function and Shutdown erase layer ops)
+    }
+    // Move the op out and free the map slot first: the {coord,layer} key is available again immediately, and
+    // the read buffer is reclaimed when `op` leaves scope at the end of this function. The worker has already
+    // pushed its completion (that is how we got here), so freeing the buffer now cannot race a mid-read.
+    ActiveLayerOp op = std::move(it->second);
+    activeLayerLoadOperations_.erase(it);
+
+    CellData* cell = worldPartition_ ? worldPartition_->GetCell(key.coord) : nullptr;
+
+    // Discard the result on abandon (unload/eviction raced the read), missing cell, or a failed read. Pull the
+    // Loading entry we published so the layer reads as absent (fail-as-absence), never as a zombie Loaded layer.
+    auto pullLoading = [&]() {
+        if (!cell) {
+            return;
+        }
+        auto le = cell->layers.find(key.layer);
+        if (le != cell->layers.end() && le->second.state == CellLoadState::Loading) {
+            cell->layers.erase(le);  // Loading entry holds no pool memory yet
+        }
+    };
+    if (op.abandoned || cell == nullptr || !success) {
+        if (!success && !op.abandoned) {
+            stats_.failedLoads++;
+        }
+        pullLoading();
+        return;
+    }
+    auto le = cell->layers.find(key.layer);
+    if (le == cell->layers.end() || le->second.state != CellLoadState::Loading) {
+        return;  // superseded by an unload/reload between submit and completion; drop
+    }
+
+    // Extract this layer's decompressed bytes from the fully-read file (main-thread decode).
+    std::vector<uint8_t> layerBytes;
+    if (!ExtractLayer(op.rawReadBuffer.data(), op.rawReadBuffer.size(), key.layer, layerBytes)) {
+        cell->layers.erase(le);  // file present but this layer absent/corrupt -> fail-as-absence
+        stats_.failedLoads++;
+        return;
+    }
+
+    // Commit. An EMPTY layer is valid (commit {nullptr,0,Loaded}); a non-empty one needs a pool allocation.
+    void* mem = nullptr;
+    if (!layerBytes.empty()) {
+        mem = memoryPool_ ? memoryPool_->Allocate(layerBytes.size(), alignof(std::max_align_t)) : nullptr;
+        if (!mem) {
+            NEXT_LOG_ERROR("FinishLayerLoad: failed to allocate %zu bytes for layer=%u cell(%d,%d); fail-closed",
+                           layerBytes.size(), static_cast<uint32_t>(key.layer), key.coord.x, key.coord.z);
+            cell->layers.erase(le);  // had real data but the pool is full -> fail-closed, never a placeholder
+            stats_.failedLoads++;
+            return;
+        }
+        std::memcpy(mem, layerBytes.data(), layerBytes.size());
+    }
+    CellData::LayerData ld;
+    ld.layer = key.layer;
+    ld.data = mem;
+    ld.size = layerBytes.size();
+    ld.state = CellLoadState::Loaded;
+    ld.generation = nextLayerGeneration_++;  // bumped every (re)load so a consumer detects an in-place reload
+    le->second = ld;
+    cell->metadata.SetLayerPresent(key.layer);  // counted via CellData::MemorySize() (sums layers)
+}
+
 void StreamingManager::UnloadCellLayer(const CellCoord& coord, CellLayer layer) {
     if (!initialized_) {
         return;
+    }
+
+    // Abandon any in-flight async read for this layer: the read still completes, but FinishLayerLoad will see
+    // abandoned=true (and/or the pulled Loading entry) and discard + reclaim it. We deliberately do NOT free
+    // its read buffer here -> a worker may be mid-read -> no use-after-free.
+    auto opIt = activeLayerLoadOperations_.find(CellLayerKey{coord, layer});
+    if (opIt != activeLayerLoadOperations_.end()) {
+        opIt->second.abandoned = true;
     }
 
     CellData* cell = worldPartition_->GetCell(coord);
@@ -1094,7 +1228,7 @@ void StreamingManager::UnloadCellLayer(const CellCoord& coord, CellLayer layer) 
     if (it->second.data && memoryPool_) {
         memoryPool_->Free(it->second.data);
     }
-    cell->layers.erase(it);
+    cell->layers.erase(it);  // memory recount is automatic: CellData::MemorySize() sums the remaining layers
     cell->metadata.SetLayerPresent(layer, false);
 }
 
@@ -1266,8 +1400,8 @@ void StreamingManager::UnloadAll() {
         }
     }
 
-    NEXT_LOG_INFO("UnloadAll requested for %zu cells (inflightLoads=%zu inflightUnloads=%zu)",
-                  loadedCells.size(), activeLoadOperations_.size(), activeUnloadOperations_.size());
+    NEXT_LOG_INFO("UnloadAll requested for %zu cells (inflightLoads=%zu inflightUnloads=%zu)", loadedCells.size(),
+                  activeLoadOperations_.size(), activeUnloadOperations_.size());
 }
 
 void StreamingManager::Shutdown() {
@@ -1321,6 +1455,9 @@ void StreamingManager::Shutdown() {
     loadQueue_.clear();
     unloadQueue_.clear();
     activeLoadOperations_.clear();
+    // Safe here: asyncIO_->Shutdown() above joined the IO workers, so no worker is still reading into these
+    // layer op buffers (abandoned reads can no longer be in flight).
+    activeLayerLoadOperations_.clear();
     activeUnloadOperations_.clear();
     cellToPackageName_.clear();
     cellToBundle_.clear();
@@ -1370,10 +1507,8 @@ void StreamingManager::UpdateStreaming(float deltaTime, const Vec3& cameraPositi
     for (const CellCoord& coord : desiredCells) {
         const CellData* existing = worldPartition_->GetCell(coord);
         if (existing) {
-            if (existing->state == CellLoadState::Loaded ||
-                existing->state == CellLoadState::Queued ||
-                existing->state == CellLoadState::Loading ||
-                existing->state == CellLoadState::Decompressing ||
+            if (existing->state == CellLoadState::Loaded || existing->state == CellLoadState::Queued ||
+                existing->state == CellLoadState::Loading || existing->state == CellLoadState::Decompressing ||
                 existing->state == CellLoadState::Uploading) {
                 continue;
             }
@@ -1399,7 +1534,8 @@ void StreamingManager::UpdateStreaming(float deltaTime, const Vec3& cameraPositi
     }
 }
 
-void StreamingManager::UpdatePredictiveStreaming(const Vec3& cameraPosition, const Vec3& cameraDirection, const Vec3& cameraVelocity) {
+void StreamingManager::UpdatePredictiveStreaming(const Vec3& cameraPosition, const Vec3& cameraDirection,
+                                                 const Vec3& cameraVelocity) {
     const float velSq = cameraVelocity.Dot(cameraVelocity);
     if (velSq < 1e-4f) {
         return;
@@ -1427,10 +1563,8 @@ void StreamingManager::UpdatePredictiveStreaming(const Vec3& cameraPosition, con
     for (const CellCoord& coord : predicted) {
         const CellData* existing = worldPartition_->GetCell(coord);
         if (existing) {
-            if (existing->state == CellLoadState::Loaded ||
-                existing->state == CellLoadState::Queued ||
-                existing->state == CellLoadState::Loading ||
-                existing->state == CellLoadState::Decompressing ||
+            if (existing->state == CellLoadState::Loaded || existing->state == CellLoadState::Queued ||
+                existing->state == CellLoadState::Loading || existing->state == CellLoadState::Decompressing ||
                 existing->state == CellLoadState::Uploading) {
                 continue;
             }
@@ -1461,10 +1595,7 @@ void StreamingManager::ProcessLoadQueue() {
 
     // Sort by priority (highest first)
     std::sort(loadQueue_.begin(), loadQueue_.end(),
-        [](const CellLoadRequest& a, const CellLoadRequest& b) {
-            return a.priority > b.priority;
-        }
-    );
+              [](const CellLoadRequest& a, const CellLoadRequest& b) { return a.priority > b.priority; });
 
     // Process loads while under the in-flight cap.
     std::vector<CellCoord> started;
@@ -1475,8 +1606,7 @@ void StreamingManager::ProcessLoadQueue() {
         }
         // Per-frame admission budget: bound how many new read+decompress pipelines we kick
         // off in a single frame so a large queue can't submit a thundering herd at once.
-        if (config_.maxLoadStartsPerFrame != 0 &&
-            stats_.loadStartsThisFrame >= config_.maxLoadStartsPerFrame) {
+        if (config_.maxLoadStartsPerFrame != 0 && stats_.loadStartsThisFrame >= config_.maxLoadStartsPerFrame) {
             break;
         }
         if (activeLoadOperations_.count(request.coord) != 0) {
@@ -1491,15 +1621,15 @@ void StreamingManager::ProcessLoadQueue() {
 
     // Remove started requests (queue is small; O(n^2) is fine).
     if (!started.empty()) {
-        loadQueue_.erase(
-            std::remove_if(loadQueue_.begin(), loadQueue_.end(),
-                           [&](const CellLoadRequest& r) {
-                               for (const CellCoord& c : started) {
-                                   if (r.coord == c) return true;
-                               }
-                               return false;
-                           }),
-            loadQueue_.end());
+        loadQueue_.erase(std::remove_if(loadQueue_.begin(), loadQueue_.end(),
+                                        [&](const CellLoadRequest& r) {
+                                            for (const CellCoord& c : started) {
+                                                if (r.coord == c)
+                                                    return true;
+                                            }
+                                            return false;
+                                        }),
+                         loadQueue_.end());
     }
 }
 
@@ -1519,15 +1649,15 @@ void StreamingManager::ProcessUnloadQueue() {
     }
 
     if (!started.empty()) {
-        unloadQueue_.erase(
-            std::remove_if(unloadQueue_.begin(), unloadQueue_.end(),
-                           [&](const CellUnloadRequest& r) {
-                               for (const CellCoord& c : started) {
-                                   if (r.coord == c) return true;
-                               }
-                               return false;
-                           }),
-            unloadQueue_.end());
+        unloadQueue_.erase(std::remove_if(unloadQueue_.begin(), unloadQueue_.end(),
+                                          [&](const CellUnloadRequest& r) {
+                                              for (const CellCoord& c : started) {
+                                                  if (r.coord == c)
+                                                      return true;
+                                              }
+                                              return false;
+                                          }),
+                           unloadQueue_.end());
     }
 }
 
@@ -1585,8 +1715,8 @@ void StreamingManager::ProcessCellLoad(const CellLoadRequest& request) {
         cell->metadata.dataSize = config_.placeholderCellSizeBytes;
         worldPartition_->UpdateCellState(request.coord, CellLoadState::Loaded);
         evictionPolicy_->RecordAccess(request.coord, currentFrame_);
-        NEXT_LOG_WARNING("Loaded placeholder cell for (%d,%d) because '%s' was missing",
-                         request.coord.x, request.coord.z, filePathForLog.c_str());
+        NEXT_LOG_WARNING("Loaded placeholder cell for (%d,%d) because '%s' was missing", request.coord.x,
+                         request.coord.z, filePathForLog.c_str());
         return;
     }
 
@@ -1634,8 +1764,7 @@ void StreamingManager::ProcessCellLoad(const CellLoadRequest& request) {
         const uint64_t rawCellPayloadBudgetBytes = static_cast<uint64_t>(memoryBudgetBytes);
         if (fileSize > rawCellPayloadBudgetBytes) {
             NEXT_LOG_ERROR("Cell file exceeds streaming memory budget: %s (%llu bytes > %llu bytes)",
-                           filePathForLog.c_str(),
-                           static_cast<unsigned long long>(fileSize),
+                           filePathForLog.c_str(), static_cast<unsigned long long>(fileSize),
                            static_cast<unsigned long long>(rawCellPayloadBudgetBytes));
             worldPartition_->UpdateCellState(request.coord, CellLoadState::Error);
             stats_.failedLoads++;
@@ -1652,141 +1781,142 @@ void StreamingManager::ProcessCellLoad(const CellLoadRequest& request) {
         }
         void* readBuffer = op.rawReadBuffer.data();
         const CellCoord coord = request.coord;
-        const uint32_t ioPriority = request.priority >= 1.0f
-            ? 0u
-            : static_cast<uint32_t>((1.0f - std::max(0.0f, request.priority)) * 1000.0f);
-        const uint64_t asyncRequestId = asyncIO_ ? asyncIO_->SubmitReadRequest(
-            filePath,
-            0,
-            fileSize,
-            readBuffer,
-            CompressionType::None,
-            [this, coord, fileSize, rawCellPayloadBudgetBytes, ioPriority](bool success, uint64_t bytesProcessed) {
-                auto pushCompletion = [this](CellOpCompletion completion) {
-                    std::lock_guard<std::mutex> lock(completionMutex_);
-                    completions_.push_back(std::move(completion));
-                };
+        const uint32_t ioPriority =
+            request.priority >= 1.0f ? 0u : static_cast<uint32_t>((1.0f - std::max(0.0f, request.priority)) * 1000.0f);
+        const uint64_t asyncRequestId =
+            asyncIO_
+                ? asyncIO_->SubmitReadRequest(
+                      filePath, 0, fileSize, readBuffer, CompressionType::None,
+                      [this, coord, fileSize, rawCellPayloadBudgetBytes, ioPriority](bool success,
+                                                                                     uint64_t bytesProcessed) {
+                          auto pushCompletion = [this](CellOpCompletion completion) {
+                              std::lock_guard<std::mutex> lock(completionMutex_);
+                              completions_.push_back(std::move(completion));
+                          };
 
-                CellOpCompletion c;
-                c.coord = coord;
-                c.isLoad = true;
-                c.packageBacked = false;
-                c.diskBytes = fileSize;
-                c.bytes = bytesProcessed;
-                c.success = success && bytesProcessed == fileSize;
+                          CellOpCompletion c;
+                          c.coord = coord;
+                          c.isLoad = true;
+                          c.packageBacked = false;
+                          c.diskBytes = fileSize;
+                          c.bytes = bytesProcessed;
+                          c.success = success && bytesProcessed == fileSize;
 
-                auto it = activeLoadOperations_.find(coord);
-                if (!c.success) {
-                    c.error = "AsyncIO read failed";
-                    pushCompletion(std::move(c));
-                    return;
-                }
-                if (it == activeLoadOperations_.end()) {
-                    c.success = false;
-                    c.error = "AsyncIO read completed after active load was removed";
-                    pushCompletion(std::move(c));
-                    return;
-                }
+                          auto it = activeLoadOperations_.find(coord);
+                          if (!c.success) {
+                              c.error = "AsyncIO read failed";
+                              pushCompletion(std::move(c));
+                              return;
+                          }
+                          if (it == activeLoadOperations_.end()) {
+                              c.success = false;
+                              c.error = "AsyncIO read completed after active load was removed";
+                              pushCompletion(std::move(c));
+                              return;
+                          }
 
-                ActiveCellOp& active = it->second;
-                const CellPayloadInfo payload = InspectCellPayload(active.rawReadBuffer);
-                if (!payload.valid) {
-                    c.success = false;
-                    c.error = payload.error.empty() ? "Invalid cell payload" : payload.error;
-                    pushCompletion(std::move(c));
-                    return;
-                }
+                          ActiveCellOp& active = it->second;
+                          const CellPayloadInfo payload = InspectCellPayload(active.rawReadBuffer);
+                          if (!payload.valid) {
+                              c.success = false;
+                              c.error = payload.error.empty() ? "Invalid cell payload" : payload.error;
+                              pushCompletion(std::move(c));
+                              return;
+                          }
 
-                if (payload.decompressedSize > rawCellPayloadBudgetBytes) {
-                    c.success = false;
-                    c.bytes = 0;
-                    c.error = "Cell payload exceeds streaming memory budget";
-                    pushCompletion(std::move(c));
-                    return;
-                }
+                          if (payload.decompressedSize > rawCellPayloadBudgetBytes) {
+                              c.success = false;
+                              c.bytes = 0;
+                              c.error = "Cell payload exceeds streaming memory budget";
+                              pushCompletion(std::move(c));
+                              return;
+                          }
 
-                if (payload.compression == CompressionType::None) {
-                    c.bytes = payload.decompressedSize;
-                    const size_t payloadOffset = static_cast<size_t>(payload.payloadOffset);
-                    const size_t payloadSize = static_cast<size_t>(payload.payloadSize);
-                    try {
-                        if (payloadOffset == 0 && payloadSize == active.rawReadBuffer.size()) {
-                            c.rawCellData = std::move(active.rawReadBuffer);
-                        } else {
-                            const uint8_t* payloadBegin = active.rawReadBuffer.data() + payloadOffset;
-                            c.rawCellData.assign(payloadBegin, payloadBegin + payloadSize);
-                        }
-                    } catch (const std::exception& e) {
-                        c.success = false;
-                        c.bytes = 0;
-                        c.rawCellData.clear();
-                        c.error = std::string("Failed to allocate cell payload buffer: ") + e.what();
-                    }
-                    pushCompletion(std::move(c));
-                    return;
-                }
+                          if (payload.compression == CompressionType::None) {
+                              c.bytes = payload.decompressedSize;
+                              const size_t payloadOffset = static_cast<size_t>(payload.payloadOffset);
+                              const size_t payloadSize = static_cast<size_t>(payload.payloadSize);
+                              try {
+                                  if (payloadOffset == 0 && payloadSize == active.rawReadBuffer.size()) {
+                                      c.rawCellData = std::move(active.rawReadBuffer);
+                                  } else {
+                                      const uint8_t* payloadBegin = active.rawReadBuffer.data() + payloadOffset;
+                                      c.rawCellData.assign(payloadBegin, payloadBegin + payloadSize);
+                                  }
+                              } catch (const std::exception& e) {
+                                  c.success = false;
+                                  c.bytes = 0;
+                                  c.rawCellData.clear();
+                                  c.error = std::string("Failed to allocate cell payload buffer: ") + e.what();
+                              }
+                              pushCompletion(std::move(c));
+                              return;
+                          }
 
-                try {
-                    active.rawDecompressedBuffer.resize(static_cast<size_t>(payload.decompressedSize));
-                } catch (const std::exception& e) {
-                    c.success = false;
-                    c.bytes = 0;
-                    c.error = std::string("Failed to allocate cell decompression buffer: ") + e.what();
-                    pushCompletion(std::move(c));
-                    return;
-                }
-                active.decompressedBytes = payload.decompressedSize;
-                active.compressionType = payload.compression;
+                          try {
+                              active.rawDecompressedBuffer.resize(static_cast<size_t>(payload.decompressedSize));
+                          } catch (const std::exception& e) {
+                              c.success = false;
+                              c.bytes = 0;
+                              c.error = std::string("Failed to allocate cell decompression buffer: ") + e.what();
+                              pushCompletion(std::move(c));
+                              return;
+                          }
+                          active.decompressedBytes = payload.decompressedSize;
+                          active.compressionType = payload.compression;
 
-                if (worldPartition_ && worldPartition_->GetCell(coord)) {
-                    worldPartition_->UpdateCellState(coord, CellLoadState::Decompressing);
-                }
+                          if (worldPartition_ && worldPartition_->GetCell(coord)) {
+                              worldPartition_->UpdateCellState(coord, CellLoadState::Decompressing);
+                          }
 
-                const size_t payloadOffset = static_cast<size_t>(payload.payloadOffset);
-                const void* compressedInput = active.rawReadBuffer.data() + payloadOffset;
-                void* decompressedOutput = active.rawDecompressedBuffer.data();
-                const uint64_t expectedBytes = payload.decompressedSize;
-                const uint64_t decompressRequestId = asyncIO_ ? asyncIO_->SubmitDecompressRequest(
-                    compressedInput,
-                    payload.payloadSize,
-                    decompressedOutput,
-                    payload.decompressedSize,
-                    payload.compression,
-                    [this, coord, fileSize, expectedBytes](bool decompressSuccess, uint64_t decompressedBytes) {
-                        CellOpCompletion dc;
-                        dc.coord = coord;
-                        dc.isLoad = true;
-                        dc.packageBacked = false;
-                        dc.diskBytes = fileSize;
-                        dc.bytes = decompressedBytes;
-                        dc.success = decompressSuccess && decompressedBytes == expectedBytes;
+                          const size_t payloadOffset = static_cast<size_t>(payload.payloadOffset);
+                          const void* compressedInput = active.rawReadBuffer.data() + payloadOffset;
+                          void* decompressedOutput = active.rawDecompressedBuffer.data();
+                          const uint64_t expectedBytes = payload.decompressedSize;
+                          const uint64_t decompressRequestId =
+                              asyncIO_
+                                  ? asyncIO_->SubmitDecompressRequest(
+                                        compressedInput, payload.payloadSize, decompressedOutput,
+                                        payload.decompressedSize, payload.compression,
+                                        [this, coord, fileSize, expectedBytes](bool decompressSuccess,
+                                                                               uint64_t decompressedBytes) {
+                                            CellOpCompletion dc;
+                                            dc.coord = coord;
+                                            dc.isLoad = true;
+                                            dc.packageBacked = false;
+                                            dc.diskBytes = fileSize;
+                                            dc.bytes = decompressedBytes;
+                                            dc.success = decompressSuccess && decompressedBytes == expectedBytes;
 
-                        auto activeIt = activeLoadOperations_.find(coord);
-                        if (dc.success && activeIt != activeLoadOperations_.end()) {
-                            dc.rawCellData = std::move(activeIt->second.rawDecompressedBuffer);
-                        } else if (!dc.success) {
-                            dc.error = "AsyncIO decompression failed";
-                        } else {
-                            dc.success = false;
-                            dc.error = "AsyncIO decompression completed after active load was removed";
-                        }
+                                            auto activeIt = activeLoadOperations_.find(coord);
+                                            if (dc.success && activeIt != activeLoadOperations_.end()) {
+                                                dc.rawCellData = std::move(activeIt->second.rawDecompressedBuffer);
+                                            } else if (!dc.success) {
+                                                dc.error = "AsyncIO decompression failed";
+                                            } else {
+                                                dc.success = false;
+                                                dc.error =
+                                                    "AsyncIO decompression completed after active load was removed";
+                                            }
 
-                        std::lock_guard<std::mutex> lock(completionMutex_);
-                        completions_.push_back(std::move(dc));
-                    },
-                    ioPriority) : 0;
+                                            std::lock_guard<std::mutex> lock(completionMutex_);
+                                            completions_.push_back(std::move(dc));
+                                        },
+                                        ioPriority)
+                                  : 0;
 
-                if (decompressRequestId == 0) {
-                    c.success = false;
-                    c.bytes = 0;
-                    c.error = "Failed to submit async cell decompression";
-                    pushCompletion(std::move(c));
-                    return;
-                }
+                          if (decompressRequestId == 0) {
+                              c.success = false;
+                              c.bytes = 0;
+                              c.error = "Failed to submit async cell decompression";
+                              pushCompletion(std::move(c));
+                              return;
+                          }
 
-                active.asyncRequestId = decompressRequestId;
-            },
-            ioPriority) : 0;
+                          active.asyncRequestId = decompressRequestId;
+                      },
+                      ioPriority)
+                : 0;
 
         if (asyncRequestId == 0) {
             NEXT_LOG_ERROR("Failed to submit async cell read: %s", filePathForLog.c_str());
@@ -1801,39 +1931,42 @@ void StreamingManager::ProcessCellLoad(const CellLoadRequest& request) {
     }
 
     auto& js = Next::JobSystem::Instance();
-    op.job = js.Submit([this, coord = request.coord, pkgName, pkgPath, filePath, fileSize, packageBacked]() {
-        CellOpCompletion c;
-        c.coord = coord;
-        c.isLoad = true;
-        c.packageBacked = packageBacked;
-        c.packageName = pkgName;
-        c.bytes = fileSize;
-        c.diskBytes = fileSize;
+    op.job = js.Submit(
+        [this, coord = request.coord, pkgName, pkgPath, filePath, fileSize, packageBacked]() {
+            CellOpCompletion c;
+            c.coord = coord;
+            c.isLoad = true;
+            c.packageBacked = packageBacked;
+            c.packageName = pkgName;
+            c.bytes = fileSize;
+            c.diskBytes = fileSize;
 
-        if (packageBacked) {
-            c.success = Next::AssetManager::Instance().LoadPackage(pkgPath);
-            if (!c.success) {
-                c.error = "LoadPackage failed";
-            }
-        } else {
-            std::ifstream in(std::filesystem::path(filePath), std::ios::binary);
-            if (!in.good()) {
-                c.success = false;
-                c.error = "Failed to open raw cell file";
-            } else {
-                c.rawCellData.resize(static_cast<size_t>(fileSize));
-                in.read(reinterpret_cast<char*>(c.rawCellData.data()), static_cast<std::streamsize>(c.rawCellData.size()));
-                c.success = in.good() || static_cast<uint64_t>(in.gcount()) == fileSize;
+            if (packageBacked) {
+                c.success = Next::AssetManager::Instance().LoadPackage(pkgPath);
                 if (!c.success) {
-                    c.rawCellData.clear();
-                    c.error = "Failed to read raw cell file";
+                    c.error = "LoadPackage failed";
+                }
+            } else {
+                std::ifstream in(std::filesystem::path(filePath), std::ios::binary);
+                if (!in.good()) {
+                    c.success = false;
+                    c.error = "Failed to open raw cell file";
+                } else {
+                    c.rawCellData.resize(static_cast<size_t>(fileSize));
+                    in.read(reinterpret_cast<char*>(c.rawCellData.data()),
+                            static_cast<std::streamsize>(c.rawCellData.size()));
+                    c.success = in.good() || static_cast<uint64_t>(in.gcount()) == fileSize;
+                    if (!c.success) {
+                        c.rawCellData.clear();
+                        c.error = "Failed to read raw cell file";
+                    }
                 }
             }
-        }
 
-        std::lock_guard<std::mutex> lock(completionMutex_);
-        completions_.push_back(std::move(c));
-    }, Next::JobPriority::High, {}, "CellLoadPackage");
+            std::lock_guard<std::mutex> lock(completionMutex_);
+            completions_.push_back(std::move(c));
+        },
+        Next::JobPriority::High, {}, "CellLoadPackage");
 
     activeLoadOperations_[request.coord] = std::move(op);
 }
@@ -1856,6 +1989,14 @@ void StreamingManager::ProcessCellUnload(const CellUnloadRequest& request) {
         activeLoadOperations_.erase(itLoad);
     }
 
+    // Abandon any in-flight async layer reads for this coord (whole-cell eviction). Same discipline as
+    // UnloadCellLayer: mark abandoned, let the read finish, reclaim in FinishLayerLoad (no mid-read free).
+    for (auto& entry : activeLayerLoadOperations_) {
+        if (entry.first.coord == request.coord) {
+            entry.second.abandoned = true;
+        }
+    }
+
     worldPartition_->RequestCellUnload(request.coord);
 
     // Only package-backed cells need AssetManager unload.
@@ -1866,20 +2007,22 @@ void StreamingManager::ProcessCellUnload(const CellUnloadRequest& request) {
     }
 
     auto& js = Next::JobSystem::Instance();
-    Next::JobHandle job = js.Submit([this, coord = request.coord, pkgName]() {
-        if (!pkgName.empty()) {
-            Next::AssetManager::Instance().UnloadPackage(pkgName);
-        }
+    Next::JobHandle job = js.Submit(
+        [this, coord = request.coord, pkgName]() {
+            if (!pkgName.empty()) {
+                Next::AssetManager::Instance().UnloadPackage(pkgName);
+            }
 
-        CellOpCompletion c;
-        c.coord = coord;
-        c.isLoad = false;
-        c.success = true;
-        c.packageName = pkgName;
+            CellOpCompletion c;
+            c.coord = coord;
+            c.isLoad = false;
+            c.success = true;
+            c.packageName = pkgName;
 
-        std::lock_guard<std::mutex> lock(completionMutex_);
-        completions_.push_back(std::move(c));
-    }, Next::JobPriority::Normal, {}, "CellUnloadPackage");
+            std::lock_guard<std::mutex> lock(completionMutex_);
+            completions_.push_back(std::move(c));
+        },
+        Next::JobPriority::Normal, {}, "CellUnloadPackage");
 
     activeUnloadOperations_[request.coord] = job;
 }
@@ -1976,17 +2119,13 @@ void StreamingManager::EnforceMemoryBudget() {
         }
     }
 
-    std::vector<EvictionCandidate> candidates = evictionPolicy_->SelectEvictionCandidates(
-        loaded, targetFree, config_.maxConcurrentUnloads
-    );
+    std::vector<EvictionCandidate> candidates =
+        evictionPolicy_->SelectEvictionCandidates(loaded, targetFree, config_.maxConcurrentUnloads);
 
     if (config_.logStreamingEvents) {
         NEXT_LOG_INFO("EnforceMemoryBudget: usage=%.2fMB budget=%.2fMB targetFree=%.2fMB loaded=%zu candidates=%zu",
-                      static_cast<double>(usage) / (1024.0 * 1024.0),
-                      static_cast<double>(budget) / (1024.0 * 1024.0),
-                      static_cast<double>(targetFree) / (1024.0 * 1024.0),
-                      loaded.size(),
-                      candidates.size());
+                      static_cast<double>(usage) / (1024.0 * 1024.0), static_cast<double>(budget) / (1024.0 * 1024.0),
+                      static_cast<double>(targetFree) / (1024.0 * 1024.0), loaded.size(), candidates.size());
     }
 
     // Evict selected cells
@@ -1998,10 +2137,8 @@ void StreamingManager::EnforceMemoryBudget() {
         UnloadCell(candidate.coord);
     }
     if (!candidates.empty()) {
-        evictionPolicy_->RecordEvictionBatch(
-            static_cast<uint32_t>(candidates.size()),
-            memoryFreed,
-            scoreTotal / static_cast<float>(candidates.size()));
+        evictionPolicy_->RecordEvictionBatch(static_cast<uint32_t>(candidates.size()), memoryFreed,
+                                             scoreTotal / static_cast<float>(candidates.size()));
     }
 
     // Apply unloads immediately so utilization reflects the new state within the same frame.
@@ -2018,7 +2155,8 @@ void StreamingManager::UpdateMemoryStatistics() {
     evictionPolicy_->SetCurrentCellCount(stats_.loadedCells);
 }
 
-float StreamingManager::CalculateCellPriority(const CellCoord& coord, const Vec3& cameraPosition, const Vec3& cameraDirection) const {
+float StreamingManager::CalculateCellPriority(const CellCoord& coord, const Vec3& cameraPosition,
+                                              const Vec3& cameraDirection) const {
     // Higher = more important to load.
     Vec3 cellPos = worldPartition_->CellToWorld(coord);
     Vec3 toCell = cellPos - cameraPosition;
@@ -2062,17 +2200,28 @@ float StreamingManager::CalculateLayerPriority(CellLayer layer) const {
     // Fallback table mirrors the WorldPartitionConfig defaults so callers get
     // sensible behavior even if the world partition isn't initialized yet.
     switch (layer) {
-        case CellLayer::Terrain:    return 1.0f;
-        case CellLayer::StaticMesh: return 0.9f;
-        case CellLayer::Collision:  return 0.9f;
-        case CellLayer::HLOD:       return 0.8f;
-        case CellLayer::NavMesh:    return 0.7f;
-        case CellLayer::Dynamic:    return 0.6f;
-        case CellLayer::Vegetation: return 0.5f;
-        case CellLayer::Props:      return 0.4f;
-        case CellLayer::Audio:      return 0.3f;
-        case CellLayer::Quest:      return 0.2f;
-        default:                    return 0.5f;
+        case CellLayer::Terrain:
+            return 1.0f;
+        case CellLayer::StaticMesh:
+            return 0.9f;
+        case CellLayer::Collision:
+            return 0.9f;
+        case CellLayer::HLOD:
+            return 0.8f;
+        case CellLayer::NavMesh:
+            return 0.7f;
+        case CellLayer::Dynamic:
+            return 0.6f;
+        case CellLayer::Vegetation:
+            return 0.5f;
+        case CellLayer::Props:
+            return 0.4f;
+        case CellLayer::Audio:
+            return 0.3f;
+        case CellLayer::Quest:
+            return 0.2f;
+        default:
+            return 0.5f;
     }
 }
 
@@ -2102,17 +2251,14 @@ void StreamingManager::UpdateStatistics(float deltaTime) {
     if (lodSystem_) {
         const auto lodStats = lodSystem_->GetStatistics();
         stats_.highDetailCells = lodStats.highDetailObjects;
-        stats_.lowDetailCells  = lodStats.mediumDetailObjects + lodStats.lowDetailObjects;
-        stats_.hlodCells       = lodStats.hlodObjects;
+        stats_.lowDetailCells = lodStats.mediumDetailObjects + lodStats.lowDetailObjects;
+        stats_.hlodCells = lodStats.hlodObjects;
         // Anything currently tracked by the LOD system is by definition visible
         // (it gets registered when a cell is loaded into view).
-        stats_.visibleCells = lodStats.highDetailObjects +
-                              lodStats.mediumDetailObjects +
-                              lodStats.lowDetailObjects +
-                              lodStats.hlodObjects +
-                              lodStats.impostorObjects;
+        stats_.visibleCells = lodStats.highDetailObjects + lodStats.mediumDetailObjects + lodStats.lowDetailObjects +
+                              lodStats.hlodObjects + lodStats.impostorObjects;
     }
 }
 
-} // namespace Streaming
-} // namespace Next
+}  // namespace Streaming
+}  // namespace Next

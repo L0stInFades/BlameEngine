@@ -1,0 +1,78 @@
+---
+---
+
+<div class="boot-screen" id="bootScreen">
+  <div class="boot-screen__box">
+    <div class="boot-screen__logo">BLAME ENGINE KERNEL // v0.9.1A</div>
+    <div class="boot-screen__console" id="bootConsole"><span class="boot-cursor"></span></div>
+    <div class="boot-screen__bar-container">
+      <div class="boot-screen__bar" id="bootBar"></div>
+    </div>
+    <button class="boot-screen__skip" id="bootSkip">INTERRUPT_BOOT</button>
+  </div>
+</div>
+
+<script>
+  const logs = [
+    '[    0.000000] BLAME ENGINE KERNEL v0.9.1a initialization',
+    '[    0.004123] Hardware: Headless Authoritative Node / 128 Cores',
+    '[    0.082101] Audit: 130 source files mapped to memory',
+    '[    0.155022] Platform (L2): Threading, File I/O, Pipe subsystems READY',
+    '[    0.201334] JobSystem (L3): 128 workers allocated. Lock-free steal queues ACTIVE.',
+    '[    0.412093] Sim Core: Archetype ECS memory arena reserved (4GB). ASan: Clean.',
+    '[    0.803211] Game API: kGameApiAbiVersion = 1.1 (17 host-calls, 8 domains).',
+    '[    0.890012] Sandbox: RefVm + Wasm3Sandbox initialized. strict mode.',
+    '[    1.200114] Sandbox: wasm_meter injected. Gas instrumentation ACTIVE.',
+    '[    1.450992] Physics: Jolt v5.2.0 bound to IPhysicsWorld. Determinism: TRUE.',
+    '[    1.902220] Boundary: SnapshotTripleBuffer allocated (wait-free, atom exchange).',
+    '[    2.100450] World: Partitioning grid 144 cells. 8-state async IO ready.',
+    '[    2.310111] Level: Fail-closed validators passed. 30 security gates GREEN.',
+    '[    2.602230] NvimSurface: Subprocess `nvim --embed` attached to tty0.',
+    '[    2.750121] NvimSurface: ext_linegrid parsed. GUI flushed to virtual layer.',
+    '[    3.100222] Sys status: All 250+ penetration & integrity tests passed.',
+    '[    3.333333] INIT SEQUENCE COMPLETE.',
+    '[    3.333334] ACCESS GRANTED. Awaiting directives...',
+  ]
+
+  const screen = document.getElementById('bootScreen')
+  const consoleEl = document.getElementById('bootConsole')
+  const bar = document.getElementById('bootBar') as HTMLElement | null
+  const skip = document.getElementById('bootSkip')
+  const cursor = consoleEl?.querySelector('.boot-cursor') ?? null
+
+  if (screen && consoleEl) {
+    const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      screen.classList.add('is-loaded')
+      document.dispatchEvent(new CustomEvent('blame:boot-complete'))
+    }
+    skip?.addEventListener('click', finish)
+
+    if (REDUCED) {
+      finish()
+    } else {
+      let i = 0
+      const printNext = () => {
+        if (done) return
+        if (i < logs.length) {
+          const div = document.createElement('div')
+          div.textContent = logs[i]
+          consoleEl.insertBefore(div, cursor)
+          const lines = consoleEl.querySelectorAll('div')
+          if (lines.length > 16) lines[0].remove()
+          i++
+          if (bar) bar.style.width = (i / logs.length) * 100 + '%'
+          let delay = 15 + Math.random() * 30
+          if (i === 5 || i === 10 || i === 15) delay = 200 + Math.random() * 150
+          setTimeout(printNext, delay)
+        } else {
+          setTimeout(finish, 500)
+        }
+      }
+      setTimeout(printNext, 200)
+    }
+  }
+</script>

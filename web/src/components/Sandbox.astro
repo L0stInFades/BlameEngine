@@ -1,0 +1,112 @@
+---
+import { Icon } from 'astro-icon/components'
+
+const redlines = [
+  { n: 'R1', title: '零环境依赖', desc: '除了显式注册的宿主调用（host-call），沙箱内不暴露任何系统级文件、网络、进程原语，阻断所有底层逃逸的可能性。' },
+  { n: 'R2', title: '能力门控 Gateway', desc: '唯一的外部通道是 HostGateway。沙箱只能看到被高度约束、精简重组的 Game API 子集，彻底阻断隐式环境污染。' },
+  { n: 'R3', title: '指令级燃料计费', desc: '使用运行步数（Gas）而非物理时间约束 CPU 占用。代码陷入死循环时燃料将瞬间扣尽并被宿主安全终止，避免服务器挂起。' },
+  { n: 'R4', title: '静态分配内存天花板', desc: '每个执行实例分配固定的内存 Arena，超额或越界访问将被硬件与沙箱双重拦截，保障宿主服务器的平稳健康。' },
+  { n: 'R5', title: '故障零泄露', desc: '沙箱内发生的任何严重错误（越界、爆栈、除零、非法指令）都将被精准收容在实例内部，绝对不会波及核心物理世界的演进。' },
+]
+
+const backends = [
+  {
+    id: 'BACKEND A',
+    title: 'RefVm',
+    path: 'engine/sandbox/src · ref_vm.cpp · 567 LOC',
+    body: '自研的微型指令级解释器。基于“设计即安全”哲学，从底层抛弃了所有系统调用指令，唯一的外部边界为受控的 Hostcall 槽位，作为整个沙箱架构的参考基准。',
+    feats: ['零逃逸原语，结构上安全', '原生燃料，精确 fuelUsed', 'Host-call 约定刻意对齐 WASM 内存模型'],
+    icon: 'lucide:layers',
+  },
+  {
+    id: 'BACKEND B',
+    title: 'Wasm3Sandbox',
+    path: 'engine/sandbox/src · wasm_sandbox.cpp · 231 LOC',
+    body: '工业级高性能 WebAssembly 沙箱底座。无缝对接 C++、Rust 及所有现代高级语言前端，将编译出的字节码进行快速装载与安全执行，与 RefVm 共用同一套无缝通信规约。',
+    feats: ['A*（C++）/ 二分查找（Rust）已在 tools/wasm_demo 跑通', '与 HostGateway 同一入口，零重构边界', '头部/链接级 trampoline 重导出指针 (base,size) 边界'],
+    icon: 'lucide:zap',
+  },
+  {
+    id: 'METER',
+    title: 'wasm_meter',
+    path: 'engine/sandbox/src · wasm_meter.cpp · 536 LOC',
+    body: '在模块装载期进行的指令级燃料插桩（Gas instrumentation）。它在函数入口和循环分支节点注入扣费语句，让恶性代码从失控卡死转化为优雅的安全异常拦截。',
+    feats: ['同一 SandboxPolicy::fuel 货币，跨后端可比', '失败闭合：未知 opcode / SIMD / atomics 拒绝运行', '增量式 append，不重排既有函数/全局索引'],
+    icon: 'lucide:activity',
+  },
+]
+---
+
+<section class="sec sec--sandbox" id="sandbox">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§03</span>
+    <h2 class="sec__title">天马行空的狂想，在钢铁堡垒中起舞</h2>
+    <span class="sec__meta">UNBOUND LOGIC · GUARDED BY CONTAINMENT</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    我们深知创造力弥足珍贵，更懂得系统的稳健是生命的底线。Blame Engine 提供零逃逸概率的隔离堡垒，给玩家的奇思妙想提供最温柔的保护，给服务器提供最坚固的屏障。
+  </p>
+
+  <!-- Sandbox Redlines Grid -->
+  <div class="redlines">
+    {
+      redlines.map((rl) => (
+        <div class="redline glow-card glow-card--red reveal">
+          <div class="redline__header">
+            <span class="redline__n">{rl.n}</span>
+            <Icon name="lucide:shield-alert" class="redline__icon" width={16} height={16} />
+          </div>
+          <h3>{rl.title}</h3>
+          <p>{rl.desc}</p>
+        </div>
+      ))
+    }
+  </div>
+
+  <!-- Virtualization Backends Grid -->
+  <div class="backends">
+    {
+      backends.map((be) => (
+        <article class="backend glow-card reveal">
+          <header class="backend__head">
+            <div class="backend__head-row">
+              <span class="backend__id">{be.id}</span>
+              <Icon name={be.icon} class="backend__icon" width={16} height={16} />
+            </div>
+            <h3>{be.title}</h3>
+            <span class="backend__path">{be.path}</span>
+          </header>
+          <p class="backend__body">{be.body}</p>
+          <ul class="backend__feats">
+            {be.feats.map((feat) => (
+              <li><i>✓</i> {feat}</li>
+            ))}
+          </ul>
+        </article>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .redline__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .redline__icon {
+    color: var(--red);
+    filter: drop-shadow(0 0 4px var(--red-glow));
+  }
+  .backend__head-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .backend__icon {
+    color: var(--cyan);
+    filter: drop-shadow(0 0 4px var(--cyan-glow));
+  }
+</style>

@@ -1,0 +1,39 @@
+# Example water scene (ADR-0015). Cook with:
+#   next_assetc water assets/water/harbor.water.txt <cellX> <cellZ> <cellSize> out.ncell [none|lz4|zstd]
+# The headless core owns this water (surface + buoyancy + flow + submersion); UE5 renders the SAME
+# surface from these WaveComponents. Bodies are selected per-cell by footprint overlap at cook time.
+
+scene harbor
+name Harbor District
+
+# The global sea: an unbounded, wind-driven ocean. `ocean` synthesizes a deterministic Gerstner train
+# (windDirX windDirZ windSpeed medianWavelength count). Conductive + lethal: a deep-water hazard.
+body sea ocean
+  bounds -100000 -50 -100000 100000 0 100000
+  surface 0
+  density 1025
+  flags buoyant,conductive,lethal,breaksSight
+  ocean 1 0.2 12 24 5
+
+# A still dock pool carved into the harbor floor.
+body dock-pool pool
+  bounds 0 -4 0 32 0 32
+  surface 0
+  density 1000
+  flags buoyant
+
+# A canal current sweeping east at 2.5 m/s.
+body canal river
+  bounds 40 -3 -8 240 0 8
+  surface 0
+  density 1000
+  flow 2.5 0 0
+  flags buoyant,current
+
+# A basement that floods over 30s up to +3m (a hacking objective: flood the room to short the servers).
+body server-room flood
+  bounds 300 -1 300 320 4 320
+  surface -1
+  density 1000
+  flood 0.1 3
+  flags buoyant,conductive

@@ -4,6 +4,9 @@ bin/
 lib/
 out/
 
+# CTest scratch output (left behind by running ctest from the source root)
+Testing/
+
 # Compiled Object files
 *.obj
 *.o

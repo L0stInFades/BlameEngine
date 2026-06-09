@@ -1,0 +1,119 @@
+---
+import { Icon } from 'astro-icon/components'
+
+const steps = [
+  {
+    num: '01',
+    title: 'INNOVATE · 工具挂载',
+    desc: '内嵌工业级 Neovim 编辑器，通过高性能 msgpack-rpc 协议，将生产力工具直接锚定在世界前线。无需离开工作流，用您最熟悉的快捷键与 LSP，一气呵成。',
+    src: 'Pro-Tier Tooling Integration',
+    icon: 'lucide:square-terminal',
+  },
+  {
+    num: '02',
+    title: 'BUILD · 极速编译',
+    desc: '每一次保存都触发 C++23 或 Rust 2024 的静默增量热编译。零阻碍下发，实时铸造为安全的 WASM 字节码，让代码变更如呼吸般即时生效。',
+    src: 'Real-Time Compilation Pipeline',
+    icon: 'lucide:cpu',
+  },
+  {
+    num: '03',
+    title: 'DEPLOY · 零感沙载',
+    desc: '逻辑瞬间分发至世界运行节点。借助 Wasm 沙箱与指令级 Gas 核算，在装载期即完成静态安全性审计，让社区或 AI 生成的逻辑安全无虞地奔跑。',
+    src: 'Zero-Friction Deployment Matrix',
+    icon: 'lucide:send',
+  },
+  {
+    num: '04',
+    title: 'CONNECT · 意图互联',
+    desc: '跨越物理与虚拟的边界。所有通过 HostGateway 发起的交互指令都经过能力域的高速校验，转化为代表玩家纯粹意图的原子指令并列入处理序列。',
+    src: 'Unified Gateway · Intent Engine',
+    icon: 'lucide:combine',
+  },
+  {
+    num: '05',
+    title: 'SIMULATE · 确定性演算',
+    desc: '数据导向架构（DOD）的大规模运作。以毫秒级确定性时钟推进核心状态，在底层进行无锁物理与状态结算，确保在百万实体下拥有百分之百的演化确定性。',
+    src: 'engine/runtime · engine/gameplay · engine/physics',
+    icon: 'lucide:boxes',
+  },
+  {
+    num: '06',
+    title: 'RENDER · 电影级视界',
+    desc: '数据解耦，视觉呈现的终极归宿。引擎通过无锁并发通道将世界状态平滑同步至虚幻引擎 5，用次世代的光影与粒子，将数理逻辑演绎为震撼人心的视觉史诗。',
+    src: 'Next-Gen Visual Bridge',
+    icon: 'lucide:tv',
+  },
+]
+
+const code = `<span class="t-d">// Real-Time Compilation Pipeline/astar.cpp  ·  编译到 wasm32,经 Wasm3Sandbox 跑在 headless 世界</span>
+<span class="t-cmd">#include</span> <span class="t-v">"guest_api.h"</span>
+
+<span class="t-cmd">extern</span> <span class="t-v">"C"</span> <span class="t-cmd">int</span> <span class="t-fn">run</span>(<span class="t-cmd">int</span> arg) {
+    <span class="t-d">// 1. 拿自己当前位置（Time + Observe 域）</span>
+    PositionResult me;  <span class="t-fn">host_call</span>(<span class="t-n">4</span>, ...);
+    <span class="t-d">// 2. 半径感知所有 OBSTACLE 实体（Sense 域）</span>
+    EntityListHeader obs;  <span class="t-fn">host_call</span>(<span class="t-n">6</span>, ...);
+    <span class="t-d">// 3. A* 4-连接 / Manhattan 启发式 / 8×8 网格</span>
+    <span class="t-cmd">int</span> path_len = <span class="t-fn">astar</span>(<span class="t-v">"obstacles.bin"</span>, me, obs);
+    <span class="t-d">// 4. 下一格的 MoveTo 意图（Actuate 域）</span>
+    MoveToArgs intent{ .target = next_step, .maxSpeed = <span class="t-n">3.5f</span> };
+    <span class="t-fn">host_call</span>(<span class="t-n">9</span>, &amp;intent, <span class="t-cmd">sizeof</span>(intent), ...);
+    <span class="t-cmd">return</span> path_len;  <span class="t-d">// 24,与 host BFS 逐位对齐</span>
+}
+
+<span class="t-ok">↳ Toolchain: clang --target=wasm32 -O2</span>
+<span class="t-ok">↳ Fuel: 184,221 / 1,000,000  ·  Calls: 71  ·  Traps: none</span>`
+---
+
+<section class="sec sec--loop" id="loop">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§01</span>
+    <h2 class="sec__title">从指尖灵感，到次世代视界</h2>
+    <span class="sec__meta">END-TO-END PIPELINE · FROM KEYSTROKE TO CANVAS</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    从您的第一行代码，到虚幻引擎 5 物理视界中完美的动态响应，是一条浑然一体、毫秒级流转的工业级数据流。这一切都悄无声息地发生，让您重回心流状态。
+  </p>
+
+  <ol class="loop reveal" id="loopSteps">
+    {
+      steps.map((step) => (
+        <li class="loop__step glow-card">
+          <div class="step__head">
+            <span class="loop__n">{step.num}</span>
+            <Icon name={step.icon} class="step__icon" width={16} height={16} />
+          </div>
+          <h3>{step.title}</h3>
+          <p>{step.desc}</p>
+          <span class="loop__src">{step.src}</span>
+        </li>
+      ))
+    }
+  </ol>
+
+  <div class="loop__detail">
+    <div class="loop__code reveal">
+      <div class="term__bar">
+        <span class="term__dot"></span>
+        <span class="term__dot"></span>
+        <span class="term__dot"></span>
+        <span class="term__title">astar.cpp — 玩家在 nvim 里写的真实 C++23</span>
+      </div>
+      <pre class="term__body" set:html={code}></pre>
+    </div>
+  </div>
+</section>
+
+<style>
+  .step__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .step__icon {
+    color: var(--cyan);
+    filter: drop-shadow(0 0 4px var(--cyan-glow));
+  }
+</style>

@@ -20,20 +20,15 @@ struct CellCoord {
     CellCoord() : x(0), z(0) {}
     CellCoord(int32_t x, int32_t z) : x(x), z(z) {}
 
-    bool operator==(const CellCoord& other) const {
-        return x == other.x && z == other.z;
-    }
+    bool operator==(const CellCoord& other) const { return x == other.x && z == other.z; }
 
-    bool operator!=(const CellCoord& other) const {
-        return !(*this == other);
-    }
+    bool operator!=(const CellCoord& other) const { return !(*this == other); }
 
     // Hash function for unordered_map
     struct Hash {
         size_t operator()(const CellCoord& coord) const {
             // Combine x and z into single hash
-            return static_cast<size_t>(coord.x) * 73856093 ^
-                   static_cast<size_t>(coord.z) * 19349663;
+            return static_cast<size_t>(coord.x) * 73856093 ^ static_cast<size_t>(coord.z) * 19349663;
         }
     };
 
@@ -48,17 +43,18 @@ struct CellCoord {
 // ===== Cell Content Layers =====
 
 enum class CellLayer : uint32_t {
-    Terrain = 0,        // 地形数据
-    StaticMesh = 1,     // 静态网格
-    Vegetation = 2,     // 植被
-    Props = 3,          // 道具装饰
-    NavMesh = 4,        // 导航网格
-    Audio = 5,          // 音频
-    HLOD = 6,           // 高层LOD
-    Dynamic = 7,        // 动态对象
-    Quest = 8,          // 任务点
-    Collision = 9,      // 碰撞数据
-    Max = 10
+    Terrain = 0,     // 地形数据
+    StaticMesh = 1,  // 静态网格
+    Vegetation = 2,  // 植被
+    Props = 3,       // 道具装饰
+    NavMesh = 4,     // 导航网格
+    Audio = 5,       // 音频
+    HLOD = 6,        // 高层LOD
+    Dynamic = 7,     // 动态对象
+    Quest = 8,       // 任务点
+    Collision = 9,   // 碰撞数据
+    Water = 10,      // 水体 (ADR-0015): 权威水体表面参数 + 浮力/流场数据 (核心拥有, UE5 只渲染)
+    Max = 11
 };
 
 // ===== Cell Load State =====
@@ -85,8 +81,8 @@ struct CellMetadata {
     // Statistics
     uint32_t triangleCount;
     uint32_t entityCount;
-    uint64_t dataSize;   // Compressed size on disk
-    uint64_t memorySize; // Uncompressed size in memory
+    uint64_t dataSize;    // Compressed size on disk
+    uint64_t memorySize;  // Uncompressed size in memory
 
     // Layers present in this cell
     uint32_t layerMask;  // Bitmask of CellLayer
@@ -95,15 +91,14 @@ struct CellMetadata {
     uint32_t lodLevels;  // Number of LOD levels (0 = only HLOD)
 
     CellMetadata()
-        : cellSize(64.0f)
-        , version(0)
-        , triangleCount(0)
-        , entityCount(0)
-        , dataSize(0)
-        , memorySize(0)
-        , layerMask(0)
-        , lodLevels(0)
-    {}
+        : cellSize(64.0f),
+          version(0),
+          triangleCount(0),
+          entityCount(0),
+          dataSize(0),
+          memorySize(0),
+          layerMask(0),
+          lodLevels(0) {}
 
     static constexpr uint32_t LayerBit(CellLayer layer) {
         const uint32_t layerIndex = static_cast<uint32_t>(layer);
@@ -134,9 +129,7 @@ struct CellMetadata {
     float MemoryToDiskRatio() const {
         return dataSize == 0 ? 0.0f : static_cast<float>(memorySize) / static_cast<float>(dataSize);
     }
-    float ClampedCellSize(float minimumSize = 1.0f) const {
-        return cellSize < minimumSize ? minimumSize : cellSize;
-    }
+    float ClampedCellSize(float minimumSize = 1.0f) const { return cellSize < minimumSize ? minimumSize : cellSize; }
 };
 
 // ===== Cell Data =====
@@ -149,19 +142,18 @@ struct CellData {
     // Layer data (each layer can be independently loaded/unloaded)
     struct LayerData {
         CellLayer layer;
-        void* data;                 // Raw decompressed data
-        uint64_t size;              // Size in bytes
+        void* data;     // Raw decompressed data
+        uint64_t size;  // Size in bytes
         CellLoadState state;
-        uint64_t gpuResourceHandle; // Handle to GPU resource (if applicable)
+        uint64_t gpuResourceHandle;  // Handle to GPU resource (if applicable)
+        uint64_t generation;         // bumped on every (re)load -> lets a consumer detect an in-place reload
 
-        LayerData() : data(nullptr), size(0), state(CellLoadState::Unloaded), gpuResourceHandle(0) {}
+        LayerData() : data(nullptr), size(0), state(CellLoadState::Unloaded), gpuResourceHandle(0), generation(0) {}
 
         bool IsLoaded() const { return state == CellLoadState::Loaded; }
         bool IsPending() const {
-            return state == CellLoadState::Queued ||
-                   state == CellLoadState::Loading ||
-                   state == CellLoadState::Decompressing ||
-                   state == CellLoadState::Uploading;
+            return state == CellLoadState::Queued || state == CellLoadState::Loading ||
+                   state == CellLoadState::Decompressing || state == CellLoadState::Uploading;
         }
         bool HasData() const { return data != nullptr; }
         bool HasSize() const { return size != 0; }
@@ -184,12 +176,11 @@ struct CellData {
     bool isPlaceholderData;
 
     CellData()
-        : state(CellLoadState::Unloaded)
-        , priority(0.0f)
-        , lastAccessFrame(0)
-        , asyncOperationHandle(0)
-        , isPlaceholderData(false)
-    {}
+        : state(CellLoadState::Unloaded),
+          priority(0.0f),
+          lastAccessFrame(0),
+          asyncOperationHandle(0),
+          isPlaceholderData(false) {}
 
     bool IsLayerLoaded(CellLayer layer) const {
         auto it = layers.find(layer);
@@ -198,10 +189,8 @@ struct CellData {
 
     bool IsLoaded() const { return state == CellLoadState::Loaded; }
     bool IsPending() const {
-        return state == CellLoadState::Queued ||
-               state == CellLoadState::Loading ||
-               state == CellLoadState::Decompressing ||
-               state == CellLoadState::Uploading;
+        return state == CellLoadState::Queued || state == CellLoadState::Loading ||
+               state == CellLoadState::Decompressing || state == CellLoadState::Uploading;
     }
     bool IsUnloading() const { return state == CellLoadState::Unloading; }
     bool IsError() const { return state == CellLoadState::Error; }
@@ -212,7 +201,17 @@ struct CellData {
     bool HasAsyncOperation() const { return asyncOperationHandle != 0; }
     bool HasMemoryData() const { return metadata.HasMemoryData(); }
     bool HasDiskData() const { return metadata.HasDiskData(); }
-    uint64_t MemorySize() const { return metadata.memorySize; }
+    uint64_t MemorySize() const {
+        // StaticMesh / placeholder bytes live in metadata.memorySize; other layers (e.g. Vegetation)
+        // carry their bytes in their LayerData, so sum them here rather than mutating the shared scalar.
+        uint64_t total = metadata.memorySize;
+        for (const auto& entry : layers) {
+            if (entry.first != CellLayer::StaticMesh) {
+                total += entry.second.size;
+            }
+        }
+        return total;
+    }
     uint64_t DiskDataSize() const { return metadata.dataSize; }
     size_t LayerCount() const { return layers.size(); }
     size_t LoadedLayerCount() const {
@@ -240,27 +239,22 @@ struct CellData {
 // ===== Region (Higher-level grouping) =====
 
 struct RegionCoord {
-    int32_t regionX, regionZ;  // Region coordinates
+    int32_t regionX, regionZ;                  // Region coordinates
     static constexpr int32_t REGION_SIZE = 8;  // Each region is 8x8 cells
 
     RegionCoord() : regionX(0), regionZ(0) {}
     RegionCoord(int32_t x, int32_t z) : regionX(x), regionZ(z) {}
 
     static RegionCoord FromCellCoord(const CellCoord& cell) {
-        return RegionCoord(
-            cell.x >= 0 ? cell.x / REGION_SIZE : (cell.x - REGION_SIZE + 1) / REGION_SIZE,
-            cell.z >= 0 ? cell.z / REGION_SIZE : (cell.z - REGION_SIZE + 1) / REGION_SIZE
-        );
+        return RegionCoord(cell.x >= 0 ? cell.x / REGION_SIZE : (cell.x - REGION_SIZE + 1) / REGION_SIZE,
+                           cell.z >= 0 ? cell.z / REGION_SIZE : (cell.z - REGION_SIZE + 1) / REGION_SIZE);
     }
 
-    bool operator==(const RegionCoord& other) const {
-        return regionX == other.regionX && regionZ == other.regionZ;
-    }
+    bool operator==(const RegionCoord& other) const { return regionX == other.regionX && regionZ == other.regionZ; }
 
     struct Hash {
         size_t operator()(const RegionCoord& coord) const {
-            return static_cast<size_t>(coord.regionX) * 73856093 ^
-                   static_cast<size_t>(coord.regionZ) * 19349663;
+            return static_cast<size_t>(coord.regionX) * 73856093 ^ static_cast<size_t>(coord.regionZ) * 19349663;
         }
     };
 };
@@ -280,36 +274,30 @@ struct RegionMetadata {
     uint32_t totalTriangles;
     uint32_t totalEntities;
 
-    RegionMetadata()
-        : version(0)
-        , hlodDataSize(0)
-        , hlodGPUHandle(0)
-        , totalTriangles(0)
-        , totalEntities(0)
-    {}
+    RegionMetadata() : version(0), hlodDataSize(0), hlodGPUHandle(0), totalTriangles(0), totalEntities(0) {}
 };
 
 // ===== World Partition Configuration =====
 
 struct WorldPartitionConfig {
     // Grid settings
-    float cellSize = 64.0f;              // Size of each cell (meters)
-    float loadRadius = 256.0f;           // Default load radius around camera
-    float unloadRadius = 384.0f;         // Radius beyond which cells are unloaded
-    float preloadRadius = 128.0f;        // Prefetch radius ahead of camera
+    float cellSize = 64.0f;        // Size of each cell (meters)
+    float loadRadius = 256.0f;     // Default load radius around camera
+    float unloadRadius = 384.0f;   // Radius beyond which cells are unloaded
+    float preloadRadius = 128.0f;  // Prefetch radius ahead of camera
 
     // Layer priority (for partial loading)
-    std::vector<float> layerPriority;    // Priority multiplier per layer
+    std::vector<float> layerPriority;  // Priority multiplier per layer
 
     // Budget limits
-    size_t maxLoadedCells = 256;         // Maximum cells loaded simultaneously
-    size_t maxMemoryMB = 2048;           // Maximum memory for world data (MB)
-    size_t maxPendingLoads = 16;         // Maximum concurrent load operations
+    size_t maxLoadedCells = 256;  // Maximum cells loaded simultaneously
+    size_t maxMemoryMB = 2048;    // Maximum memory for world data (MB)
+    size_t maxPendingLoads = 16;  // Maximum concurrent load operations
 
     // Quality settings
-    bool enableHLOD = true;              // Enable HLOD for distant cells
-    uint32_t maxLODLevel = 4;            // Maximum LOD level to load
-    bool enableStreaming = true;         // Enable streaming (or load all upfront)
+    bool enableHLOD = true;       // Enable HLOD for distant cells
+    uint32_t maxLODLevel = 4;     // Maximum LOD level to load
+    bool enableStreaming = true;  // Enable streaming (or load all upfront)
 
     // Performance tuning
     bool prioritizeCameraDirection = true;  // Give higher priority to cells in front of camera
@@ -328,6 +316,7 @@ struct WorldPartitionConfig {
         layerPriority[static_cast<size_t>(CellLayer::Audio)] = 0.3f;
         layerPriority[static_cast<size_t>(CellLayer::Dynamic)] = 0.6f;
         layerPriority[static_cast<size_t>(CellLayer::Quest)] = 0.2f;
+        layerPriority[static_cast<size_t>(CellLayer::Water)] = 0.6f;  // ADR-0015
     }
 };
 
@@ -437,5 +426,5 @@ private:
     bool initialized_;
 };
 
-} // namespace Streaming
-} // namespace Next
+}  // namespace Streaming
+}  // namespace Next

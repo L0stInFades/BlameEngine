@@ -37,18 +37,28 @@ struct MeshAssetView {
     MeshHeader header{};
     const void* payload = nullptr;
     size_t payloadBytes = 0;
+    // Owns a reference to the backing asset data (B3 fix): `payload` stays valid for the lifetime
+    // of this view (and any copy of it), even if the asset is concurrently Release()d/unloaded.
+    // Views constructed by hand (e.g. validation-only tests) may leave it empty.
+    std::shared_ptr<const void> keepAlive;
 };
 
 struct TextureAssetView {
     TextureHeader header{};
     const void* pixels = nullptr;
     size_t pixelBytes = 0;
+    // Owns a reference to the backing asset data (B3 fix): `pixels` stays valid for the lifetime
+    // of this view (and any copy of it), even if the asset is concurrently Release()d/unloaded.
+    std::shared_ptr<const void> keepAlive;
 };
 
 struct MaterialAssetView {
     MaterialHeader header{};
     const void* payload = nullptr;
     size_t payloadBytes = 0;
+    // Owns a reference to the backing asset data (B3 fix): `payload` stays valid for the lifetime
+    // of this view (and any copy of it), even if the asset is concurrently Release()d/unloaded.
+    std::shared_ptr<const void> keepAlive;
 
     static bool FixedStringIsValid(const char* value, size_t capacity) {
         return value && capacity != 0 && value[0] != '\0' &&

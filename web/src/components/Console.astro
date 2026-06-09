@@ -1,0 +1,175 @@
+---
+---
+
+<section class="sec sec--control" id="run">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§07</span>
+    <h2 class="sec__title">无界核心：Headless 权威宿主</h2>
+    <span class="sec__meta">HEADLESS INSTANCE · TIMELESS SYNCHRONIZATION</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    让视界归于视界，计算归于纯粹。Blame Engine 在底层解耦渲染管线，使其作为无头(Headless)守护进程静默流转。无需任何 GPU 损耗，即能实现从极速模拟到确定性状态分发的全部引擎重载。在这里，架构以行命令(CLI)的形式优雅延伸，构建、测试与安全审计信手霓来。
+  </p>
+
+  <div class="term glow-card reveal" id="cliTerminal">
+    <div class="term__bar">
+      <div class="term__dots">
+        <span class="term__dot"></span>
+        <span class="term__dot"></span>
+        <span class="term__dot"></span>
+      </div>
+      <div class="term__title-wrapper">
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          style="color: var(--dim); margin-right: 6px;"
+        >
+          <polyline points="4 17 10 11 4 5"></polyline>
+          <line x1="12" x2="20" y1="19" y2="19"></line>
+        </svg>
+        <span class="term__title">System Operations &amp; Telemetry Console</span>
+      </div>
+    </div>
+    <div class="term__body" id="cliOutput">
+      <div id="cliLines">
+        <div class="cli-line"><span class="t-d"># Blame Engine Headless Subsystem - Awaiting Operator Directives</span></div>
+        <div class="cli-line"><span class="t-c">$ </span><span class="t-cmd">_</span></div>
+      </div>
+      <span class="boot-cursor" id="cliCursor"></span>
+    </div>
+    <div class="term__controls">
+      <button class="term__btn" data-scn="cmdBuild"><span class="btn__label">引擎构建</span><span class="btn__cmd">make core</span></button>
+      <button class="term__btn" data-scn="cmdRun"><span class="btn__label">运行演进</span><span class="btn__cmd">run policy</span></button>
+      <button class="term__btn" data-scn="cmdWasm"><span class="btn__label">Wasm 沙箱</span><span class="btn__cmd">wasm test</span></button>
+      <button class="term__btn" data-scn="cmdAudit"><span class="btn__label">安全审计</span><span class="btn__cmd">audit check</span></button>
+      <button class="term__btn" data-scn="cmdCtest"><span class="btn__label">集成回归</span><span class="btn__cmd">make test</span></button>
+    </div>
+  </div>
+</section>
+
+<script>
+  const scenarios: Record<string, string[]> = {
+    cmdBuild: [
+      '<span class="t-c">$ </span><span class="t-cmd">make -j 8 core</span>',
+      'cc -c -O3 -std=c++2b -fPIC -o out/world.o src/world.cpp',
+      'cc -c -O3 -std=c++2b -fPIC -o out/ref_vm.o src/ref_vm.cpp',
+      'cc -c -O3 -std=c++2b -fPIC -o out/game_api.o src/game_api.cpp',
+      'cc -c -O3 -std=c++2b -fPIC -o out/snapshot_publisher.o src/snapshot_publisher.cpp',
+      'cc -c -O3 -std=c++2b -fPIC -o out/streaming_manager.o src/streaming_manager.cpp',
+      'cc -c -O3 -std=c++2b -fPIC -o out/jolt_physics_world.o src/jolt_physics_world.cpp',
+      'ar rcs lib/libblamecore.a out/*.o',
+      'cc -O3 -std=c++2b -o bin/hackops_demo src/main.cpp -Llib -lblamecore',
+      '<span class="t-ok">✔ Build succeeded · 0 warnings · 0 errors</span>',
+    ],
+    cmdRun: [
+      '<span class="t-c">$ </span><span class="t-cmd">./bin/hackops_demo -p sample_policy.py</span>',
+      '[hackops] spawning nvim -n --embed ... attached to pty.',
+      '[hackops] msgpack-rpc handshake OK. ext_linegrid negotiated.',
+      '[hackops] RunPolicy: parsing user code via NvimSurface ...',
+      '<span class="t-d">  # sample_policy.py</span>',
+      '<span class="t-d">  def score_order(order, route):</span>',
+      '<span class="t-d">    score  = route["travel_time"]</span>',
+      '<span class="t-d">    score += route["camera_risk"] * 3</span>',
+      '<span class="t-d">    score -= route["crowd_cover"]</span>',
+      '<span class="t-d">    return score</span>',
+      '[hackops] score = 18 + 4*3 - 2 = <span class="t-n">28</span>',
+      '[hackops] RouteStateForScore(28) -> <span class="t-ok">REVIEW</span>',
+      '<span class="t-ok">✔ pipeline OK · world state mutated by real script</span>',
+    ],
+    cmdWasm: [
+      '<span class="t-c">$ </span><span class="t-cmd">cc -O2 -nostdlib -o astar.wasm astar.cpp</span>',
+      '<span class="t-c">$ </span><span class="t-cmd">./bin/wasm_demo -r astar.wasm</span>',
+      '[Wasm3Sandbox] load astar.wasm ... ok (7,432 bytes, 14 funcs)',
+      '[Wasm3Sandbox] wasm_meter  : instrumented 14 funcs / 22 loops / 11 ifs.',
+      '[Wasm3Sandbox] SandboxPolicy{ fuel=1,000,000  mem=64KiB  caps=PlayerDefault() }',
+      '[host_call] Self()                  -> ok',
+      '[host_call] GetPosition(0x04)       -> pos = ( 1.5, 0.0, 3.0 )',
+      '[host_call] QueryByTag(OBSTACLE)    -> 9 entities',
+      '[host_call] MoveTo(2.5, 0.0, 4.5)   -> intent queued (maxSpeed=3.5)',
+      '<span class="t-ok">✔ path length = 24 · matches host-side BFS to the step</span>',
+      '<span class="t-d">  fuel used: 184,221 / 1,000,000  ·  host-calls: 71  ·  traps: none</span>',
+    ],
+    cmdAudit: [
+      '<span class="t-c">$ </span><span class="t-cmd">./bin/sandbox_audit -a</span>',
+      '[audit] target: ISandbox contract (ADR-0008). backends: RefVm + Wasm3Sandbox',
+      '  R1 zero ambient authority .................... <span class="t-ok">✓</span>',
+      '  R2 capability-gated host-call ................ <span class="t-ok">✓</span>',
+      '  R3 CPU fuel metering ......................... <span class="t-ok">✓</span>',
+      '     · infinite loop on Wasm3Sandbox -> FuelExhausted (ADR-0012)',
+      '     · infinite loop on RefVm       -> FuelExhausted (native)',
+      '  R4 memory ceiling / arena bounds ............ <span class="t-ok">✓</span>',
+      '  R5 fault containment (host never corrupted) . <span class="t-ok">✓</span>',
+      '  adversarial: out-of-bounds linear memory .... <span class="t-ok">✓ trapped</span>',
+      '  adversarial: hostile host_call arity ......... <span class="t-ok">✓ rejected</span>',
+      '  adversarial: illegal opcode / SIMD .......... <span class="t-ok">✓ rejected (fail-closed)</span>',
+      '<span class="t-ok">✔ Audit completed: 39 / 39 tests passed in 14.2ms.</span>',
+    ],
+    cmdCtest: [
+      '<span class="t-c">$ </span><span class="t-cmd">make test</span>',
+      'Running main test suite (POSIX compatible harness)',
+      '    Start  1: FoundationTest',
+      '    Start  2: SerializationTest',
+      '    Start  3: JobSystemTest',
+      '    Start  4: RuntimeTest           <span class="t-d">  (127 ECS tests)</span>',
+      '    Start  5: PlatformTest',
+      '    Start  6: MathTest',
+      '    Start  7: WorldStreamingTest',
+      '    Start  8: TaskSystemTest',
+      '    Start  9: ScriptSystemTest',
+      '    Start 10: GameApiTest           <span class="t-d">  (15 tests, ABI frozen)</span>',
+      '    Start 11: SandboxTest           <span class="t-d">  (40 tests incl. adversarial)</span>',
+      '    Start 12: BoundaryTest          <span class="t-d">  (10 tests, triple buffer)</span>',
+      '    Start 13: VerticalSliceTest',
+      '    Start 14: PhysicsTest',
+      '    Start 15: ActuationTest',
+      '    Start 16: PhysicsSliceTest',
+      '    Start 17: LevelTest             <span class="t-d">  (20 tests, fail-closed)</span>',
+      '',
+      '<span class="t-ok">100% tests passed, 0 tests failed out of 17</span>',
+      '<span class="t-d">Total Test time (real) :  4.18 sec</span>',
+    ],
+  }
+
+  const lines = document.getElementById('cliLines')
+  const cursor = document.getElementById('cliCursor') as HTMLElement | null
+  const btns = Array.from(document.querySelectorAll<HTMLButtonElement>('#cliTerminal .term__btn'))
+
+  if (lines) {
+    let typing = false
+    const run = (id: string) => {
+      const scn = scenarios[id]
+      if (typing || !scn) return
+      typing = true
+      btns.forEach((b) => {
+        b.disabled = true
+        b.classList.toggle('term__btn--active', b.dataset.scn === id)
+      })
+      if (cursor) cursor.style.display = 'none'
+      lines.innerHTML = ''
+      let i = 0
+      const next = () => {
+        if (i < scn.length) {
+          const div = document.createElement('div')
+          div.className = 'cli-line'
+          div.innerHTML = scn[i]
+          lines.appendChild(div)
+          i++
+          setTimeout(next, 45 + Math.random() * 60)
+        } else {
+          typing = false
+          btns.forEach((b) => (b.disabled = false))
+          if (cursor) cursor.style.display = ''
+        }
+      }
+      next()
+    }
+    btns.forEach((b) => b.addEventListener('click', () => run(b.dataset.scn!)))
+  }
+</script>

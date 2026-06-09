@@ -30,6 +30,7 @@
 #include "next/gameapi/intent_resolver.h"
 #include "next/gameapi/objective_store.h"
 #include "next/gameapi/sim_clock.h"
+#include "next/gameapi/world_query.h"
 #include "next/gameplay/physics_world_query.h"
 #include "next/physics/components.h"
 #include "next/physics/reference_physics_world.h"
@@ -141,11 +142,26 @@ std::vector<uint8_t> Img(const BytecodeBuilder& b) {
 // The headless world under test
 // ---------------------------------------------------------------------------
 struct Sim {
+    struct FixedWaterQuery final : gameapi::IWaterQuery {
+        gameapi::WaterStateResult QueryWater(const float point[3]) override {
+            gameapi::WaterStateResult r{};
+            r.inWater = 1;
+            r.submerged = point[1] <= 2.0f ? 1u : 0u;
+            r.flags = 0x6;
+            r.surfaceHeight = 2.0f;
+            r.submersionDepth = 2.0f - point[1];
+            r.flowVelocity.x = 1.0f;
+            r.flowVelocity.z = -1.0f;
+            return r;
+        }
+    };
+
     World world;
     gameapi::SimClock clock;
     gameapi::ObjectiveStore objectives;
     std::unique_ptr<physics::IPhysicsWorld> physics = physics::MakeReferencePhysicsWorld();
     std::unique_ptr<gameplay::PhysicsWorldQuery> query;
+    FixedWaterQuery waterQuery;
 
     Entity agent;
     gameapi::EntityId agentId = 0;
@@ -205,6 +221,7 @@ struct Sim {
         cfg.clock = &clock;
         cfg.objectives = &objectives;
         cfg.worldQuery = withQuery ? query.get() : nullptr;
+        cfg.waterQuery = &waterQuery;
         cfg.self = agentId;
         cfg.capabilities = caps;
         cfg.maxHostCallsPerTick = maxHostPerTick;
@@ -248,7 +265,7 @@ RunResult RunGuest(GameApi& api, const std::vector<uint8_t>& image, const Sandbo
 // PART A — exposed API boundary: drive every CallId from real guest code
 // =====================================================================================
 void AuditApiBoundary(Sim& sim) {
-    Section("PART A — exposed API boundary (16 host-calls, PlayerDefault capabilities)");
+    Section("PART A — exposed API boundary (17 host-calls, PlayerDefault capabilities)");
     const auto caps = CapabilitySet::PlayerDefault();
     const auto pol = Policy(caps);
 
@@ -483,6 +500,36 @@ void AuditApiBoundary(Sim& sim) {
         GameApi api2 = sim.MakeApi(caps, /*withQuery=*/false);
         RunResult r2 = RunGuest(api2, Img(b2), pol);
         Safe(St(r2.ret) == Status::Unsupported, "Raycast w/o physics -> Unsupported", S(St(r2.ret)));
+    }
+
+    // GetWaterState at (0,1,0) -> submerged under the fixed audit water surface at y=2.
+    {
+        BytecodeBuilder b;
+        StoreF32(b, 0, 0.0f);
+        StoreF32(b, 4, 1.0f);
+        StoreF32(b, 8, 0.0f);
+        HC(b, 0, 12, 32, 36, CallId::GetWaterState);
+        b.Emit(Op::Pop);
+        b.PushI(36).Emit(Op::Ld32).Emit(Op::Halt);  // WaterStateResult.submerged
+        GameApi api = sim.MakeApi(caps);
+        RunResult r = RunGuest(api, Img(b), pol);
+        Safe(r.ret == 1, "GetWaterState reads fixed audit water", "submerged=" + std::to_string(r.ret));
+
+        // Same call with NO waterQuery wired -> Unsupported (not a crash).
+        BytecodeBuilder b2;
+        StoreF32(b2, 4, 1.0f);
+        HC(b2, 0, 12, 32, 36, CallId::GetWaterState);
+        b2.Emit(Op::Halt);
+        GameApiConfig cfg;
+        cfg.world = &sim.world;
+        cfg.clock = &sim.clock;
+        cfg.objectives = &sim.objectives;
+        cfg.worldQuery = sim.query.get();
+        cfg.self = sim.agentId;
+        cfg.capabilities = caps;
+        GameApi api2(cfg);
+        RunResult r2 = RunGuest(api2, Img(b2), pol);
+        Safe(St(r2.ret) == Status::Unsupported, "GetWaterState w/o water -> Unsupported", S(St(r2.ret)));
     }
 }
 

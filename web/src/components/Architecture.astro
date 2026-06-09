@@ -1,0 +1,81 @@
+---
+import { Icon } from 'astro-icon/components'
+
+const layers = [
+  { lv: 'L7', name: 'Creative Logic', sub: 'game/hackops · 规则、核心玩法与沉浸体验的艺术载体，见证创意的自由生长', icon: 'lucide:folder-git', type: 'normal' },
+  { lv: 'L6', name: 'Engine System', sub: 'world · physics · gameplay · 整合大世界、时空边界与实时交互的完整生态', icon: 'lucide:layers', type: 'feature' },
+  { lv: 'L5', name: 'Kernel Interface', sub: 'sandbox · gameapi · 极致优雅的 C-ABI 契约，构筑沙箱与引擎的安全交互唯一面', icon: 'lucide:code', type: 'normal' },
+  { lv: 'L4', name: 'Simulation Engine', sub: 'runtime (Archetype ECS) · 高性能 Archetype ECS 架构，驱动时空演进的确定性心脏', icon: 'lucide:database', type: 'normal' },
+  { lv: 'L3', name: 'System Foundation', sub: 'foundation · 极速无锁并行调度、数学底座与深度系统遥测，赋能底层无尽性能', icon: 'lucide:cpu', type: 'normal' },
+  { lv: 'L2', name: 'Hardware Abstraction', sub: 'platform · 文件、多线程与管道的高效抽象，提供底噪级别的跨平台操作级支持', icon: 'lucide:radio', type: 'normal' },
+  { lv: 'L1', name: 'External Infrastructure', sub: 'external · Unreal Engine 5 高级视界、Jolt 物理模拟器与 WASM 沙箱虚拟机的基石交融', icon: 'lucide:sparkles', type: 'wip' },
+]
+---
+
+<section class="sec sec--arch" id="arch">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§06</span>
+    <h2 class="sec__title">解构纯粹：严苛的分层体系</h2>
+    <span class="sec__meta">DECOUPLED ENGINEERING · SINGLE-DIRECTION DEPENDENCY</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    在 Blame Engine 中，架构的秩序即是艺术。我们坚持绝对的单向依赖原则：高层仅面向契约，底层专注于效率。各模块边界清晰，绝无循环纠缠。即使是恢弘的 Unreal Engine 5，在此架构下亦退化为纯粹的视口呈现者。这种理性的物理级隔离，确保了极高的运行效率与坚不可摧的稳定性。
+  </p>
+
+  <div class="stack" id="stack">
+    <div class="stack__flow" aria-hidden="true">
+      <span class="stack__flow-label">依赖方向</span>
+      <span class="stack__flow-arrow">↓</span>
+    </div>
+
+    <ol class="stack__layers">
+      {
+        layers.map((l) => (
+          <li
+            class:list={[
+              'layer',
+              'glow-card',
+              l.type === 'feature' && 'layer--feature',
+              l.type === 'wip' && 'layer--wip',
+              l.type === 'wip' && 'glow-card--amber',
+              'reveal',
+            ]}
+          >
+            <span class="layer__lv">{l.lv}</span>
+            <div class="layer__name-wrapper">
+              <Icon name={l.icon} class="layer__icon" width={15} height={15} />
+              <span class="layer__name">{l.name}</span>
+            </div>
+            <span class="layer__sub">{l.sub}</span>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</section>
+
+<style>
+  .layer__name-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .layer__icon {
+    color: var(--cyan);
+    filter: drop-shadow(0 0 4px var(--cyan-glow));
+  }
+  .layer--wip .layer__icon {
+    color: var(--amber);
+    filter: drop-shadow(0 0 4px var(--amber-glow));
+  }
+  .layer.glow-card {
+    border-left-width: 3px !important;
+  }
+  .layer--feature.glow-card {
+    border-left-color: var(--cyan) !important;
+  }
+  .layer--wip.glow-card {
+    border-left-color: var(--amber) !important;
+  }
+</style>

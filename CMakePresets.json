@@ -52,6 +52,20 @@
         "BUILD_TERMINAL": "OFF",
         "BUILD_GAME_HACKOPS": "OFF"
       }
+    },
+    {
+      "name": "tsan",
+      "displayName": "ThreadSanitizer test build (lock-free boundary primitives)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/out/build/tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "NEXT_SANITIZE": "thread",
+        "BUILD_TESTS": "ON",
+        "BUILD_TOOLS": "OFF",
+        "BUILD_TERMINAL": "OFF",
+        "BUILD_GAME_HACKOPS": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -75,6 +89,10 @@
     {
       "name": "asan",
       "configurePreset": "asan"
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan"
     }
   ]
 }

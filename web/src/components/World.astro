@@ -1,0 +1,109 @@
+---
+import { Icon } from 'astro-icon/components'
+
+const cards = [
+  {
+    id: 'ECS',
+    title: 'Archetype ECS',
+    path: '工业级数据存储与遍历',
+    body: '纯正的数据导向设计 (DOD)：通过连续内存布局、高效的组件迁移与无锁指令缓冲 (CommandBuffer)，配合 Query::ForEach 实现海量实体的极速遍历。模拟逻辑与视觉表现彻底解耦，为高保真并行运算与确定性回放奠定基石。',
+    icon: 'lucide:database',
+  },
+  {
+    id: 'LEVEL',
+    title: '关卡设计系统',
+    path: '事务化确定性构建流程',
+    body: '基于纯数据模型构建关卡，采用流式构造并辅以超过 30 项缺陷检测的安全门（Fail-closed 机制）；事务化的加载机制确保了绝对的确定性——无论加载多少次，生成的场景实体状态始终完全一致。',
+    icon: 'lucide:shield-alert',
+  },
+  {
+    id: 'PHYS',
+    title: '物理：IPhysicsWorld + Jolt',
+    path: '独立物理演算封装',
+    body: '通过高度抽象的 IPhysicsWorld 接口与确定性后端，PhysicsSystem 以固定步长将演算结果同步至世界状态。现已无缝集成 Jolt 物理引擎，同时确保核心架构不与任何特定的物理底层产生强耦合。',
+    icon: 'lucide:activity',
+  },
+  {
+    id: 'STREAM',
+    title: '大世界流送：8 态异步管线',
+    path: '多态异步数据预测调度',
+    body: '融合 WorldPartition 空间切分、InterestManager 动态权重与 PredictionSystem 速度外推，辅以 8 态异步 IO 调度与 LOD/Eviction 显存淘汰，构筑了真正的次世代流送中枢。核心与视图端算力严格分离，拒绝重复计算。',
+    isWide: true,
+    icon: 'lucide:shuffle',
+  },
+  {
+    id: 'TASK',
+    title: '任务系统',
+    path: 'AI 与事件驱动载体',
+    body: '涵盖任务定义、实例追踪与持久化存档；分离了条件校验与动作执行——它是未来供 AI co-pilot “调度排程”的天然数据载体，目前处于原型验证阶段。',
+    icon: 'lucide:milestone',
+  },
+  {
+    id: 'TERM',
+    title: '嵌入式 Neovim',
+    path: 'Pro-Tier Tooling Integration',
+    body: '通过 msgpack-rpc 高速协议无缝接驳 nvim --embed，将编辑器界面网格 (ext_linegrid) 升维抽象为底层渲染面。开发者的私有 LSP 补全、主题生态与快捷键将得到原样继承，让黑客级编辑器真正成为虚拟世界的一等公民。',
+    icon: 'lucide:terminal',
+  },
+]
+
+const streamingStates = [
+  { name: 'Unloaded', active: false },
+  { name: 'Queued', active: false },
+  { name: 'Loading', active: false },
+  { name: 'Decompressing', active: false },
+  { name: 'Uploading', active: false },
+  { name: 'Loaded', active: true },
+]
+---
+
+<section class="sec sec--world" id="world">
+  <div class="sec__head reveal">
+    <span class="sec__idx">§04</span>
+    <h2 class="sec__title">纵横万里，微粒毕现</h2>
+    <span class="sec__meta">BOUNDLESS SPAN · ABSOLUTE PRECISION</span>
+  </div>
+
+  <p class="sec__intro reveal">
+    不管是构建容纳数万玩家的宏大无缝世界，还是高保真的数字孪生，Blame Engine 大规模分布式流送与高效并行组件体系，都能为您赋予探索边界的绝对自由。
+  </p>
+
+  <!-- World Cards Grid -->
+  <div class="worldcards">
+    {
+      cards.map((c) => (
+        <article class:list={['wcard', 'glow-card', c.isWide && 'wcard--wide', 'reveal']}>
+          <header class="wcard__head">
+            <div class="wcard__head-row">
+              <span class="wcard__id">{c.id}</span>
+              <Icon name={c.icon} class="wcard__icon" width={16} height={16} />
+            </div>
+            <h3>{c.title}</h3>
+            <span class="wcard__path">{c.path}</span>
+          </header>
+          <p class="wcard__body">{c.body}</p>
+
+          {c.id === 'STREAM' && (
+            <ol class="states">
+              {streamingStates.map((st) => (
+                <li class:list={[st.active && 'done']}>{st.name}</li>
+              ))}
+            </ol>
+          )}
+        </article>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .wcard__head-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .wcard__icon {
+    color: var(--cyan);
+    filter: drop-shadow(0 0 4px var(--cyan-glow));
+  }
+</style>

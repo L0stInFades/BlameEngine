@@ -2,7 +2,9 @@
 
 #include <cstring>
 
+#include "next/sandbox/ref_vm.h"  // kMaxArenaBytes: the same arena red line as the reference VM
 #include "next/sandbox/wasm_meter.h"
+#include "m3_env.h"  // wasm3 internals: runtime->memoryLimit (B2 byte cap) + memory.numPages
 #include "wasm3.h"
 
 namespace Next::sandbox {
@@ -126,12 +128,32 @@ RunResult Wasm3Sandbox::Run(const SandboxPolicy& policy, HostGateway& gateway, u
         result.trap = TrapReason::IllegalInstruction;
         return result;
     }
+    // B2 fix: reject an absurd arena up front (parity with RefVm's check) — deterministic, and
+    // independent of whether the allocation would actually fail under overcommit.
+    if (policy.memoryBytes > kMaxArenaBytes) {
+        result.trap = TrapReason::OutOfMemory;
+        return result;
+    }
 
     // Fault isolation (ADR-0008 red line #5): nothing below may throw into the host.
     try {
-        // wasm3's "stack" is the interpreter operand/call stack (bytes). Map the policy's slot cap
-        // onto it with a sane floor so real recursion (e.g. A*) has room.
-        const uint32_t stackBytes = policy.stackSlots > 1024 ? policy.stackSlots * 16u : 16u * 1024u;
+        // wasm3 runs operands AND call frames on ONE interpreter stack, so both policy knobs bound
+        // it (B2): stackSlots sizes it (16 bytes per slot, 16 KiB floor so real guests have room)
+        // and callDepth caps it (2 KiB per allowed frame — a generous per-frame allowance, so the
+        // cap binds on runaway recursion, not honest code). Recursion past the budget traps
+        // StackOverflow deterministically instead of growing host memory.
+        uint64_t stackBudget = policy.stackSlots > 1024 ? static_cast<uint64_t>(policy.stackSlots) * 16u : 16u * 1024u;
+        const uint64_t depthBudget = static_cast<uint64_t>(policy.callDepth == 0 ? 1 : policy.callDepth) * 2048u;
+        if (stackBudget > depthBudget) {
+            stackBudget = depthBudget;
+        }
+        if (stackBudget < 4096u) {
+            stackBudget = 4096u;  // floor: one frame + operands must fit even under callDepth=1
+        }
+        if (stackBudget > 8u * 1024u * 1024u) {
+            stackBudget = 8u * 1024u * 1024u;  // ceiling: a huge stackSlots cannot OOM the host
+        }
+        const uint32_t stackBytes = static_cast<uint32_t>(stackBudget);
 
         IM3Environment env = m3_NewEnvironment();
         if (env == nullptr) {
@@ -144,6 +166,12 @@ RunResult Wasm3Sandbox::Run(const SandboxPolicy& policy, HostGateway& gateway, u
             result.trap = TrapReason::OutOfMemory;
             return result;
         }
+        // B2 fix: hard-cap EVERY linear-memory allocation wasm3 makes for this guest — the
+        // declared initial memory and every memory.grow — at the policy red line, so a
+        // memory-bomb module cannot OOM the host. wasm3 treats memoryLimit==0 as "no limit",
+        // so a zero-byte policy becomes a 1-byte cap (any module that declares memory is then
+        // rejected by the declared-pages check below).
+        rt->memoryLimit = policy.memoryBytes != 0 ? policy.memoryBytes : 1u;
 
         TrapReason trap = TrapReason::None;
         int64_t ret = 0;
@@ -159,6 +187,12 @@ RunResult Wasm3Sandbox::Run(const SandboxPolicy& policy, HostGateway& gateway, u
         } else if ((r = m3_LoadModule(rt, mod)) != m3Err_none) {
             // m3_LoadModule takes ownership of `mod` on success; on failure wasm3 frees it with the runtime.
             trap = TrapReason::IllegalInstruction;
+        } else if (static_cast<uint64_t>(rt->memory.numPages) * d_m3MemPageSize > policy.memoryBytes) {
+            // B2 fix: the module's DECLARED initial memory already exceeds the policy. Reject up
+            // front with the same deterministic OutOfMemory a RefVm guest gets for an oversized
+            // arena — not a confusing mid-run BadMemoryAccess at the first access past the cap.
+            // (memoryLimit above already kept the actual host allocation under the cap.)
+            trap = TrapReason::OutOfMemory;
         } else {
             // Link the single host import. A pure-compute guest may not import it; that lookup
             // failure is benign (the import simply isn't there to satisfy).

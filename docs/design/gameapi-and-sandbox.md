@@ -25,7 +25,7 @@
 
 ```cpp
 constexpr uint16_t kGameApiVersionMajor = 1;
-constexpr uint16_t kGameApiVersionMinor = 0;
+constexpr uint16_t kGameApiVersionMinor = 1;
 constexpr uint32_t kGameApiAbiVersion = (kGameApiVersionMajor << 16) | kGameApiVersionMinor;
 
 using EntityId = uint64_t;               // = ECS Entity 的 64-bit 打包;0 = 无效

@@ -68,6 +68,32 @@ struct IPhysicsWorld {
     // Current world-space transform of the body (position + quaternion).
     virtual void GetTransform(BodyId id, float outPos[3], float outRot[4]) const = 0;
 
+    // Accumulate a world-space force on a DYNAMIC body for the NEXT Step only. The accumulator is
+    // applied during Step (semi-implicit: a = gravity + sum(force)/mass) and then CLEARED, so a
+    // sustained force must be re-applied each tick. No-op on non-dynamic or unknown bodies. This is
+    // the substrate buoyancy / drag / flow forces (the water sim) ride on; gravity stays the
+    // backend's, so buoyancy simply adds the upward force and the net is physically correct.
+    virtual void AddForce(BodyId id, const float force[3]) = 0;
+
+    // Apply an instantaneous, mass-normalized world-space impulse (dv = impulse / mass) to a DYNAMIC
+    // body immediately (this tick). No-op on non-dynamic or unknown bodies. For one-shot kicks
+    // (a splash shove, an explosion). Deterministic.
+    virtual void AddImpulse(BodyId id, const float impulse[3]) = 0;
+
+    // Accumulate a world-space TORQUE on a DYNAMIC body for the next Step (rotates it about its center
+    // of mass), applied then cleared like AddForce. No-op on non-dynamic / unknown bodies. With
+    // AddForceAtPosition this is the substrate for multi-point (pontoon) buoyancy that makes boats roll
+    // and self-right.
+    virtual void AddTorque(BodyId id, const float torque[3]) = 0;
+
+    // Apply a world-space force at a world-space point on a DYNAMIC body: it adds the force to the linear
+    // accumulator AND a torque ((worldPoint - centerOfMass) x force) about the COM. The primitive each
+    // pontoon of a multi-point buoyancy model applies. No-op on non-dynamic / unknown bodies.
+    virtual void AddForceAtPosition(BodyId id, const float force[3], const float worldPoint[3]) = 0;
+
+    // Current angular velocity (rad/s, world axes); zero for unknown / non-rotating bodies.
+    virtual void GetAngularVelocity(BodyId id, float outAngular[3]) const = 0;
+
     // Cast a ray from `origin` along `direction` (need not be normalized) up to `maxDistance`,
     // returning the nearest body hit. The backbone of line-of-sight / spatial sensing. Deterministic.
     virtual RaycastResult Raycast(const float origin[3], const float direction[3], float maxDistance) const = 0;
