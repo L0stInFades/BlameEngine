@@ -1,9 +1,10 @@
 ---
 active: true
-iteration: 1
-max_iterations: 50
-completion_promise: null
-started_at: "2026-01-16T05:10:55Z"
+iteration: 3
+session_id: f71be616-f2e4-4f57-bc91-c6b86672364c
+max_iterations: 300
+completion_promise: "engine 仓库 TODO 全部清零"
+started_at: "2026-05-09T06:34:09Z"
 ---
 
-修补所有todo和fix，就是整个引擎中的，直到再也找不到这种todo和fix的占位符为止
+扫 engine/ 下所有 TODO/FIXME，每轮挑一个文件改完并保证编译通过
