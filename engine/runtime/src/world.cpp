@@ -97,7 +97,7 @@ Entity World::CreateEntity() {
     entityMetadata_[id] = {version, true};
     EnsureEntityTracked(entity);  // place in the empty archetype until a component is added
 
-    NEXT_LOG_TRACE("Created entity: %llu (version: %u)", id, version);
+    NEXT_LOG_TRACE("Created entity: %llu (version: %u)", static_cast<unsigned long long>(id), version);
 
     NotifyEntityCreated(entity);
     return entity;
@@ -123,7 +123,7 @@ void World::DestroyEntity(Entity entity) {
     entityMetadata_[entity.id].alive = false;
     freeIDs_.push_back(entity.id);
 
-    NEXT_LOG_TRACE("Destroyed entity: %llu", entity.id);
+    NEXT_LOG_TRACE("Destroyed entity: %llu", static_cast<unsigned long long>(entity.id));
 
     NotifyEntityDestroyed(entity);
 }

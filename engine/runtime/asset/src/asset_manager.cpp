@@ -639,8 +639,8 @@ AssetHandle AssetManager::LoadAssetSync(const std::string& assetName) {
     loadedAssetsCount_++;
     totalMemory_ += data->GetPayloadSize();
 
-    NEXT_LOG_INFO("Asset loaded successfully: %s (ID: %llu, size: %zu bytes)",
-                  storageKey.c_str(), id, data->GetPayloadSize());
+    NEXT_LOG_INFO("Asset loaded successfully: %s (ID: %llu, size: %zu bytes)", storageKey.c_str(),
+                  static_cast<unsigned long long>(id), data->GetPayloadSize());
 
     return AssetHandle(id, data.get());
 }

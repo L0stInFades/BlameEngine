@@ -139,8 +139,8 @@ bool ValidateAssetChecksum(const AssetHeader& header, const void* data) {
 
     uint64_t calculated = CalculateCRC64(data, header.dataSize);
     if (calculated != header.checksum) {
-        NEXT_LOG_ERROR("Checksum mismatch for asset: %s (expected: %llx, got: %llx)", 
-                     name, header.checksum, calculated);
+        NEXT_LOG_ERROR("Checksum mismatch for asset: %s (expected: %llx, got: %llx)", name,
+                       static_cast<unsigned long long>(header.checksum), static_cast<unsigned long long>(calculated));
         return false;
     }
     

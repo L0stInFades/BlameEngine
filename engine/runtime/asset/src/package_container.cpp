@@ -179,10 +179,9 @@ bool PackageContainer::Initialize(const std::string& filePath) {
         }
 
         if (calculatedChecksum != packageHeader_.checksum) {
-            NEXT_LOG_ERROR("Package checksum mismatch for %s (expected: %llx, got: %llx)",
-                           filePath.c_str(),
-                           packageHeader_.checksum,
-                           calculatedChecksum);
+            NEXT_LOG_ERROR("Package checksum mismatch for %s (expected: %llx, got: %llx)", filePath.c_str(),
+                           static_cast<unsigned long long>(packageHeader_.checksum),
+                           static_cast<unsigned long long>(calculatedChecksum));
             return false;
         }
 

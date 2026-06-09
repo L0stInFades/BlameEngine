@@ -727,7 +727,8 @@ void AsyncIOSystem::ProcessDecompressionRequest(InternalRequest request) {
             } else {
                 // Buffer too small - this is a critical error
                 NEXT_LOG_ERROR("Buffer overflow prevented: outputSize=%llu < inputSize=%llu",
-                            request.request.outputSize, request.request.inputSize);
+                               static_cast<unsigned long long>(request.request.outputSize),
+                               static_cast<unsigned long long>(request.request.inputSize));
                 success = false;
                 errorCode = 1;
             }
