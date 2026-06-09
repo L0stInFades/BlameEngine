@@ -125,6 +125,15 @@ add_executable(test_sandbox
 target_link_libraries(test_sandbox PRIVATE ${NEXT_TEST_MAIN} next_sandbox)
 add_test(NAME SandboxTest COMMAND test_sandbox)
 
+# WASM backend security-contract tests (ADR-0011 + B2 fix) — only when the optional wasm3 backend
+# is built. The guest modules are hand-encoded, so this needs no wasm toolchain and runs in CI
+# (including the sanitizer matrix, closing the "WASM backend outside the ASan gate" hole).
+if(BUILD_WITH_WASM)
+    add_executable(test_sandbox_wasm sandbox/test_wasm_sandbox.cpp)
+    target_link_libraries(test_sandbox_wasm PRIVATE ${NEXT_TEST_MAIN} next_sandbox_wasm)
+    add_test(NAME WasmSandboxTest COMMAND test_sandbox_wasm)
+endif()
+
 # Boundary Tests (ADR-0006): triple buffer, SPSC rings, snapshot publisher diffing, transport
 add_executable(test_boundary
     boundary/test_boundary.cpp

@@ -34,6 +34,14 @@ namespace Next::sandbox {
 // fuel hook, so LoadModule rewrites the module with load-time gas instrumentation (wasm_meter.h):
 // it charges policy.fuel per metered block and traps FuelExhausted when spent, so an infinite loop
 // is bounded, not a hang. RunResult::fuelUsed reports the exact amount consumed (ADR-0012).
+//
+// policy.memoryBytes is enforced (B2 fix): every linear-memory allocation wasm3 makes for the
+// guest — declared initial memory and every memory.grow — is byte-capped at the policy, so a
+// memory-bomb module cannot OOM the host; a module whose DECLARED initial memory exceeds the
+// policy is rejected up front with a deterministic OutOfMemory (parity with RefVm's arena check).
+// policy.callDepth is enforced through the interpreter stack budget (wasm3 keeps operands and
+// call frames on one stack): the stack is sized from stackSlots and capped at callDepth frames'
+// worth of space, so runaway recursion traps StackOverflow instead of growing host memory.
 class Wasm3Sandbox final : public ISandbox {
 public:
     bool LoadModule(const uint8_t* image, size_t size, std::string* error) override;
