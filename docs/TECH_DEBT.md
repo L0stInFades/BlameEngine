@@ -9,24 +9,25 @@
 ## 🔴 审计(2026-06-03,92-agent workflow):usable ≠ artist-deliverable + 4 降级 + 3 BLOCKER
 
 对全部 9 个 `usable` 模块按「能像 UE5/Unity 交给美术/设计师用」+ 无性能问题 + 无重大 bug 核验(构建绿、30/30 ASan 为前提)。结论:**0/9 artist-deliverable**(架构使然:渲染器/编辑器/imgui 已删,创作委托给仓内不存在的 UE5 工程);**4 个连 usable 都撑不起,降级 prototype**;**3 个 BLOCKER**。
+**2026-06-10 状态:3 个 BLOCKER 已全部修复(B1/W13、B2、B3),F-1 已缓解**;详见下表与「本轮已清偿(2026-06-10)」。
 
 **🔴 BLOCKER(先修):**
 | # | 模块 | Bug | 证据 |
 |---|---|---|---|
 | ~~B1~~ ✅ **已修(W13)** | boundary | ~~`SnapshotPublisher` 发相对「上一已发布帧」的 delta、无条件推进基线,却发进故意丢帧的 TripleBuffer → delta 永久丢失、UE5 镜像永久错位~~ → **修复**:delta 改为相对**最后已 ack 的基线**(`DeltaMode::Reliable` 默认)+ 有界 inflight 历史 + **keyframe 回退**(无 ack→每帧整帧);新增 `SnapshotReceiver`(镜像 + baseline 不匹配则 skip、stale 拒绝)+ transport 加 ack 反向通道。`test_boundary_reliability` 证明重丢帧下镜像**收敛**、无永久错位 | 已修复并测试 |
-| B2 | sandbox_wasm | 64KiB 内存红线(`policy.memoryBytes`)在 wasm 后端**完全未实施** → guest 线性内存只受模块自报 + wasm3 的 2GiB 顶 = 内存炸弹 host-OOM;`callDepth` 也未强制 | `wasm_sandbox.cpp` 无 `memoryBytes`/`callDepth`;`m3_NewRuntime` 不设内存限。RefVm 有强制(`ref_vm.cpp:98,122`)→ 同一 policy 两后端含义不同 |
-| B3 | asset | 渲染面读视图 `GetMeshAssetView`/`GetTextureAssetView`/`GetMaterialAssetView` 返回裸 `const void*`,保活 `shared_ptr` 函数返回即析构 → 并发 `UnloadAsset` 即 **use-after-free** | `asset_manager.cpp:897-943` 返回;`:757-762` 释放;测试只在持引用时读,ASan 看不到 |
+| ~~B2~~ ✅ **已修(2026-06-10)** | sandbox_wasm | ~~64KiB 内存红线(`policy.memoryBytes`)在 wasm 后端**完全未实施** → guest 线性内存只受模块自报 + wasm3 的 2GiB 顶 = 内存炸弹 host-OOM;`callDepth` 也未强制~~ → **修复**:`rt->memoryLimit` 把 wasm3 为 guest 做的**每一次**线性内存分配(初始 + `memory.grow`)按字节钳在 policy 红线内;声明初始内存超 policy 的模块在 Run 入口**确定性 `OutOfMemory` 拒绝**(与 RefVm arena 检查对等);`callDepth` 经解释器栈预算强制(每帧 2KiB 额度,递归炸弹 → `StackOverflow` 而非耗尽宿主)。新增 `test_sandbox_wasm`(手工编码 guest:256MiB 内存炸弹 / grow 炸弹 / 递归炸弹 / 零内存 policy,**无需 wasm 工具链**)入 ctest + CI sanitizer 矩阵 | `wasm_sandbox.cpp` + `tests/sandbox/test_wasm_sandbox.cpp`,ASan 绿 |
+| ~~B3~~ ✅ **已修(2026-06-10)** | asset | ~~渲染面读视图 `GetMeshAssetView`/`GetTextureAssetView`/`GetMaterialAssetView` 返回裸 `const void*`,保活 `shared_ptr` 函数返回即析构 → 并发 `UnloadAsset` 即 **use-after-free**~~ → **修复**:三个视图结构体携带 `shared_ptr<const void> keepAlive` 共享所有权——视图(及其拷贝)存活期间 payload 永不悬垂,卸载后读取安全。回归测试 `MeshAssetViewSurvivesAssetUnload`(Release + UnloadPackage 后 memcmp 原始字节,ASan 下无修复即炸) | `asset_manager.{h,cpp}` + `test_asset_integration.cpp`,ASan 绿 |
 
-**完整性闸门有水分**:招牌「30/30 ASan 绿」**排除了最安全敏感/并发最复杂的代码**——`BUILD_WITH_WASM=OFF` + `BUILD_TERMINAL=OFF`,即整个 WASM 前端 + 537 行手写 wasm 改写器 + 整个 Neovim 层都不在门内。
+**完整性闸门有水分**:招牌「30/30 ASan 绿」**排除了最安全敏感/并发最复杂的代码**——`BUILD_WITH_WASM=OFF` + `BUILD_TERMINAL=OFF`,即整个 WASM 前端 + 537 行手写 wasm 改写器 + 整个 Neovim 层都不在门内。**2026-06-10 部分收口**:WASM 后端现在有专门 ctest 套件(`WasmSandboxTest`,手工编码 guest 无需工具链)并以 `wasm-sanitizers` CI job 跑在 ASan/UBSan 下;Windows 也补了 `windows-headless` CI job(MSVC + Ninja 全量 ctest)。**仍在门外**:terminal(Neovim 层,零单测)。
 
 **降级 usable → prototype** 的 4 个及其要害:
 - **serialization**:World 存档序列化器是未实现孤儿头(无 `.cpp`/不在 CMake);Binary `GetObjectKeys()` 恒 false → map 静默丢数据;JSON 无深度上限 → 不可信文件栈溢出 DoS;`ReadInt32/64` 越界 cast → UBSan abort;`Compact` 枚举 → 空指针崩溃。
 - **terminal**:不在 ASan 门内、零单测;nvim 缺失即 SIGPIPE 杀宿主;`SendInput` 每键 ≥500ms 阻塞;仅单色文本快照。
-- **sandbox_wasm**:见 B2;另每 `Run()` 重建整个 VM(无实例缓存),meter 对无 global 段的合法 wasm 误拒。
+- **sandbox_wasm**:见 B2(✅ 内存/调用深度已修,2026-06-10);另每 `Run()` 重建整个 VM(无实例缓存),meter 对无 global 段的合法 wasm 误拒。
 - **boundary**:~~见 B1;无锁并发从未跑 TSan;跨进程/网络 transport 不存在(仅 InProcess)~~ → **全部已补**:B1 已修(W13);无锁 `SpscRing`/`TripleBuffer` 上 **TSan CI job + 双线程压测**(W16,`test_boundary_concurrency`);**跨进程/UDP transport 已落地**(W15,`DatagramTransport` over `IDatagram` + 真 POSIX `UdpDatagram` + 序列化 `snapshot_codec`,丢包下镜像收敛);**服务器权威时钟**(W14,`SnapshotReceiver` 单调跟随 + `RenderClock` 不越权外推)。
 
 **仍 programmer-usable(干净/无崩溃),但非 artist-deliverable** 的 5 个仍有真实债:
-- **gameapi**:无正确性 bug;但 `QueryByTag`/`SenseRadius`/`SenseNearest` 是 O(N) 全世界扫无空间索引,每 host-call 平价 50 燃料、仅按次数限流 → **非对称 DoS**(F-1 仍 OPEN;实测 N=4 与 N=4000 同为 2754 燃料)。`SpawnEntities`/Comms 信号为声明未接的死面。
+- **gameapi**:无正确性 bug;~~但 `QueryByTag`/`SenseRadius`/`SenseNearest` 是 O(N) 全世界扫无空间索引,每 host-call 平价 50 燃料、仅按次数限流 → **非对称 DoS**(F-1 仍 OPEN;实测 N=4 与 N=4000 同为 2754 燃料)~~ → **F-1 已缓解(2026-06-10)**:三个 O(N) 扫描共享独立紧配额 `maxWorldScansPerTick`(默认 256/tick,校验通过后、扫描前计费;`GameApiRateLimit.WorldScanQuotaBoundsONScans` 测试钉死)。按工作量计费/空间索引仍是后续优化。`SpawnEntities`/Comms 信号为声明未接的死面。
 - **asset**(除 B3):**假热重载**(注释称持柄透明拾取热重载,实际 cache-hit 只 AddRef 不重读、无 mtime/Reload → 返回陈旧数据);「content-hash ID」实为**名字串的 CRC64**;「依赖 manifest」运行时**无读取器**;材质编译是**硬编码 TestPBR stub**;位串行 CRC64 全量跑加载热路径(多 GB 包阻塞数秒)+ 每载双拷贝。
 - **sandbox RefVm**:每 `Run()` 堆分配并清零整个 arena(64KiB→16MiB 实测 0.67ms→181ms/run,100% 是 setup);真实游戏 `game/hackops/src/main.cpp:111` **仍用 `popen(python3)`**、不链接 `next_sandbox`(ADR-0008 要消灭的反模式);F-2 浮点确定性未用 `-ffp-contract=off` 编译期强制。
 - **level / vegetation**:库本身稳健、fail-closed、ASan 绿;但 C++-only 编写、无序列化/存盘(level)、UE5 端 mock、broadphase 全局半径永不收缩(vegetation)。
@@ -45,7 +46,7 @@
 ## P1 — 重大
 | 缺口 | 说明 | 粗估 |
 |---|---|---|
-| **沙箱 host-call 成本不对称**(F-1,[审计](security/sandbox-audit-2026-05-30.md)) | `Sense*`/`QueryByTag` 在门面是 O(N) 全世界扫描,但每个 `HostCall` 只收**固定 50 燃料**、只按**次数**(`maxHostCallsPerTick`)限流——guest 成本与 host 工作量脱钩(实测 N=4 与 N=4000 燃料同为 2754)。多 agent 权威服务器下是算法复杂度/非对称 DoS 面。修法:按工作量计费 / 给感知类单独紧配额 / 上空间加速(网格/BVH) | 周 |
+| ~~**沙箱 host-call 成本不对称**(F-1,[审计](security/sandbox-audit-2026-05-30.md))~~ ✅ **已缓解(2026-06-10)** | ~~`Sense*`/`QueryByTag` 在门面是 O(N) 全世界扫描,但每个 `HostCall` 只收**固定 50 燃料**、只按**次数**(`maxHostCallsPerTick`)限流~~ → O(N) 世界扫描类(QueryByTag/SenseRadius/SenseNearest)现共享**独立紧配额** `maxWorldScansPerTick`(默认 256/tick),guest 无法再把平价调用放大成无界 host 工作。**剩余**(降级 P2):按工作量计费、空间加速(网格/BVH) | ~~周~~ 已落地 |
 | **AI-agent 工具面** | 把 Game API 以工具协议(MCP 式)暴露给 agent,帮玩家排任务/hack | 数周 |
 | **复活 `engine/ops`(Ops Runtime 雏形)** | 旧 master 线有 ~1275 LOC 的 `ops_workspace`/`policy_simulation`/`python_worker`(沙箱化玩家代码执行的早期雏形),分支收敛时未移植;评估并把仍适用的逻辑迁到新 archetype ECS,作为 WASM 沙箱的参考/前身。来源:tag `archive/pre-blame`([ADR-0004](adr/0004-branch-consolidation.md)) | 数周 |
 | 玩家代码编辑 UX 接入 UE5 | Neovim 表面嵌入 UE5(或伴随窗口) | 数周 |
@@ -57,7 +58,7 @@
 | 缺口 | 粗估 |
 |---|---|
 | 压缩 CMake 硬编码 lz4/zstd 路径 → `find_package`/包管理 | 天 |
-| Windows/macOS CI 跑 ctest(补平台测试矩阵) | 周 |
+| ~~Windows/macOS CI 跑 ctest(补平台测试矩阵)~~ ✅ **已补(2026-06-10)**:`windows-headless` CI job(MSVC + Ninja,全量 ctest);macOS 已由 sanitizers job 覆盖 | ~~周~~ 已落地 |
 | API 文档 + 端到端集成测试 | 周 |
 | 跨运行稳定的 ComponentTypeID(序列化用) | 天 |
 | UE5 许可/版本治理(Epic 抽成、版本升级流程)写入流程 | — |
@@ -75,6 +76,14 @@
 - 流送↔自研渲染打通、Transform 世界矩阵供渲染、无 Linux 渲染后端 → **UE5**(流送的 sim 侧兴趣管理仍可复用)。
 - 内容创作工具(场景/材质编辑、FBX/PNG 导入、资产视口) → **UE5 编辑器**。
 - 自研物理 → **Jolt**。
+
+## 本轮已清偿(2026-06-10,审计 BLOCKER 收口 + 平台/沙箱 CI 补门)
+交付前清障:92-agent 审计遗留的 2 个 OPEN BLOCKER + 1 个中危全部落地,并把两个最大的 CI 盲区补上。全部 build+test 绿(headless 49/49 + WASM 套件)。
+- **B2 修复(sandbox_wasm)**:`policy.memoryBytes` 现于 wasm3 后端**强制**——`rt->memoryLimit` 字节级钳制 guest 的每次线性内存分配(初始 + `memory.grow`),声明初始内存超 policy 的模块在 Run 入口确定性 `OutOfMemory` 拒绝(与 RefVm 对等),`policy.callDepth` 经解释器栈预算强制(递归炸弹 → `StackOverflow`)。新增 `tests/sandbox/test_wasm_sandbox.cpp`(6 项对抗:256MiB 内存炸弹 / grow 炸弹 / 递归炸弹 / 零内存 policy / 红线 arena / 良性 guest),guest 为**手工编码字节**,无需 wasm 工具链即可入 CI。`wasm_demo` 12/12 仍绿(policy 提到 4MiB——上限第一次真的生效)。
+- **B3 修复(asset)**:三个 `Get*AssetView` 视图结构体携带 `shared_ptr<const void> keepAlive` 共享底层资产所有权——视图存活期间 payload 不悬垂,Release/UnloadPackage 后读取安全(`MeshAssetViewSurvivesAssetUnload` 回归,ASan 下无修复即炸)。
+- **F-1 缓解(gameapi)**:O(N) 世界扫描(QueryByTag/SenseRadius/SenseNearest)共享独立紧配额 `maxWorldScansPerTick`(默认 256/tick;校验通过后、扫描前计费;无效调用不耗配额;`BeginTick` 重置)。按工作量计费/空间索引降级为 P2 优化。
+- **CI 补门**:`wasm-sanitizers` job(macOS,`BUILD_WITH_WASM=ON`,SandboxTest + WasmSandboxTest 跑 ASan/UBSan——WASM 后端首次进 sanitizer 门)+ `windows-headless` job(windows-latest,MSVC + Ninja,全量 ctest——Windows 构建修复不再裸奔)。
+- **仓库卫生**:清除根目录杂物(`08aed65.patch` 冗余补丁导出、`Testing/` ctest 残留入 .gitignore、`web_*_backup/` 移出仓库)。
 
 ## 本轮已清偿(2026-06-05,水体工业化收口 + 边界网络化 + B1 修复)
 按 30-item 审计清单逐项落地,全部 build+test 绿、ASan/UBSan 清、clang-format 合规、入 CI(headless **49/49** ctest;Jolt 构建绿;boundary 跑 TSan;真 UDP 回环绿)。

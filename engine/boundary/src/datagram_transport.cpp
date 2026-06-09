@@ -169,7 +169,8 @@ void DatagramTransport::Pump() {
             }
             case DatagramKind::Command: {
                 const uint8_t* body = nullptr;
-                if (DecodeSmallMessageHeader(payload, payloadLen, DatagramKind::Command, kCommandWirePayloadBytes, body)) {
+                if (DecodeSmallMessageHeader(payload, payloadLen, DatagramKind::Command, kCommandWirePayloadBytes,
+                                             body)) {
                     InputCmd c{};
                     c.type = Next::ReadLE<uint32_t>(body);
                     for (int i = 0; i < 4; ++i) {
